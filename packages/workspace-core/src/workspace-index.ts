@@ -44,6 +44,7 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
   private rootDir: string | null = null;
   private rootRealPath: string | null = null;
   private indexedFiles = 0;
+  private indexedEntries = 0;
   private readonly options: Required<WorkspaceIndexOptions>;
   private readonly ignoredDirs = new Set([
     'node_modules', '.git', '.turbo', 'dist', 'build', '.next',
@@ -62,6 +63,8 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
     this.rootRealPath = await fs.realpath(this.rootDir).catch(() => this.rootDir);
     this.indexedFiles = 0;
 
+    this.indexedEntries = 0;
+
     const rootName = path.basename(this.rootDir) || 'workspace';
     const root: FileEntry = {
       path: '',
@@ -79,7 +82,7 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
   }
 
   private async scan(dirPath: string, parent: FileEntry, depth: number): Promise<void> {
-    if (!this.rootDir || depth > this.options.maxDepth || this.indexedFiles >= this.options.maxFiles) {
+    if (!this.rootDir || depth > this.options.maxDepth || this.indexedEntries >= this.options.maxFiles) {
       return;
     }
 
@@ -91,7 +94,7 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
     }
 
     for (const entry of entries) {
-      if (this.indexedFiles >= this.options.maxFiles) break;
+      if (this.indexedEntries >= this.options.maxFiles) break;
       const fullPath = path.join(dirPath, entry.name);
       const relativePath = path.relative(this.rootDir, fullPath).split(path.sep).join('/');
 
@@ -118,6 +121,7 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
         this.indexedFiles += 1;
       }
 
+      this.indexedEntries += 1;
       parent.children!.push(fileEntry);
     }
   }
