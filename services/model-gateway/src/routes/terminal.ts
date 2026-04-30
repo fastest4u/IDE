@@ -29,8 +29,12 @@ export const registerTerminalRoutes: FastifyPluginAsync<TerminalRouteOptions> = 
       return reply.status(400).send({ error: 'Command is required and must be safe' });
     }
 
-    const session = terminalService.createSession(command.trim());
-    return reply.status(201).send({ session: session.getInfo() });
+    try {
+      const session = terminalService.createSession(command.trim());
+      return reply.status(201).send({ session: session.getInfo() });
+    } catch (err) {
+      return reply.status(400).send({ error: err instanceof Error ? err.message : 'Failed to create terminal session' });
+    }
   });
 
   app.get('/terminal/sessions', async (_request, reply) => {
@@ -146,8 +150,12 @@ export const registerTerminalRoutes: FastifyPluginAsync<TerminalRouteOptions> = 
         return reply.status(400).send({ error: 'Command is required to restart and must be safe' });
       }
 
-      const session = terminalService.createSession(cmd);
-      return reply.status(201).send({ session: session.getInfo() });
+      try {
+        const session = terminalService.createSession(cmd);
+        return reply.status(201).send({ session: session.getInfo() });
+      } catch (err) {
+        return reply.status(400).send({ error: err instanceof Error ? err.message : 'Failed to restart terminal session' });
+      }
     },
   );
 };

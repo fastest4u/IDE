@@ -27,6 +27,7 @@ export interface ProviderGenerateTextRequest {
   temperature?: number;
   tools?: AIToolCallSpec[];
   stream?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface ProviderGenerateTextResponse {

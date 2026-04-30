@@ -99,7 +99,8 @@ export const registerWorkspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions>
   });
 
   app.post('/workspace/index', async (request, reply) => {
-    const { rootDir } = request.body as { rootDir: string };
+    const body = (request.body ?? {}) as { rootDir?: unknown };
+    const rootDir = typeof body.rootDir === 'string' ? body.rootDir : '';
     if (!rootDir?.trim()) {
       return reply.code(400).send({ message: 'rootDir is required' });
     }
@@ -138,7 +139,8 @@ export const registerWorkspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions>
   });
 
   app.post('/workspace/search', async (request, reply) => {
-    const { query } = request.body as { query: string };
+    const body = (request.body ?? {}) as { query?: unknown };
+    const query = typeof body.query === 'string' ? body.query : '';
     if (!query) {
       return reply.code(400).send({ message: 'query is required' });
     }

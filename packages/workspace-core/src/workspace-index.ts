@@ -27,11 +27,24 @@ export interface WorkspaceIndex {
   listFiles(pattern?: string): Promise<FileEntry[]>;
 }
 
-type GlobPattern = (entry: FileEntry) => boolean;
+export interface WorkspaceIndexOptions {
+  maxFiles?: number;
+  maxDepth?: number;
+  maxFileSize?: number;
+}
+
+const DEFAULT_INDEX_OPTIONS: Required<WorkspaceIndexOptions> = {
+  maxFiles: 5000,
+  maxDepth: 20,
+  maxFileSize: 512 * 1024,
+};
 
 export class InMemoryWorkspaceIndex implements WorkspaceIndex {
   private fileTree: FileEntry | null = null;
-  private fileCache = new Map<string, string>();
+  private rootDir: string | null = null;
+  private rootRealPath: string | null = null;
+  private indexedFiles = 0;
+  private readonly options: Required<WorkspaceIndexOptions>;
   private readonly ignoredDirs = new Set([
     'node_modules', '.git', '.turbo', 'dist', 'build', '.next',
     '__pycache__', '.obsidian', '.DS_Store',
@@ -40,12 +53,18 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
     '.DS_Store', 'pnpm-lock.yaml', 'yarn.lock', 'package-lock.json',
   ]);
 
-  async indexDirectory(rootDir: string): Promise<FileEntry> {
-    this.fileCache.clear();
+  constructor(options: WorkspaceIndexOptions = {}) {
+    this.options = { ...DEFAULT_INDEX_OPTIONS, ...options };
+  }
 
-    const rootName = path.basename(rootDir) || 'workspace';
+  async indexDirectory(rootDir: string): Promise<FileEntry> {
+    this.rootDir = path.resolve(rootDir);
+    this.rootRealPath = await fs.realpath(this.rootDir).catch(() => this.rootDir);
+    this.indexedFiles = 0;
+
+    const rootName = path.basename(this.rootDir) || 'workspace';
     const root: FileEntry = {
-      path: rootDir,
+      path: '',
       name: rootName,
       ext: '',
       size: 0,
@@ -54,12 +73,16 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
       children: [],
     };
 
-    await this.scan(rootDir, root);
+    await this.scan(this.rootDir, root, 0);
     this.fileTree = root;
     return this.fileTree;
   }
 
-  private async scan(dirPath: string, parent: FileEntry): Promise<void> {
+  private async scan(dirPath: string, parent: FileEntry, depth: number): Promise<void> {
+    if (!this.rootDir || depth > this.options.maxDepth || this.indexedFiles >= this.options.maxFiles) {
+      return;
+    }
+
     let entries;
     try {
       entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -68,13 +91,15 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
     }
 
     for (const entry of entries) {
+      if (this.indexedFiles >= this.options.maxFiles) break;
       const fullPath = path.join(dirPath, entry.name);
+      const relativePath = path.relative(this.rootDir, fullPath).split(path.sep).join('/');
 
       if (this.ignoredDirs.has(entry.name) && entry.isDirectory()) continue;
       if (this.ignoredFiles.has(entry.name)) continue;
 
       const fileEntry: FileEntry = {
-        path: fullPath,
+        path: relativePath,
         name: entry.name,
         ext: entry.isDirectory() ? '' : path.extname(entry.name),
         size: 0,
@@ -84,12 +109,13 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
 
       if (entry.isDirectory()) {
         fileEntry.children = [];
-        await this.scan(fullPath, fileEntry);
+        await this.scan(fullPath, fileEntry, depth + 1);
       } else {
         try {
           const stat = await fs.stat(fullPath);
           fileEntry.size = stat.size;
         } catch {}
+        this.indexedFiles += 1;
       }
 
       parent.children!.push(fileEntry);
@@ -108,7 +134,7 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
 
   async getFile(filePath: string): Promise<FileEntry | null> {
     if (!this.fileTree) return null;
-    return this.findFile(this.fileTree, filePath);
+    return this.findFile(this.fileTree, normalizeWorkspacePath(filePath));
   }
 
   private findFile(root: FileEntry, targetPath: string): FileEntry | null {
@@ -122,14 +148,15 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
   }
 
   async readFile(filePath: string): Promise<string> {
-    if (this.fileCache.has(filePath)) {
-      return this.fileCache.get(filePath) ?? '';
-    }
+    const absolutePath = await this.resolveWorkspaceFile(filePath);
+    if (!absolutePath) return `[Could not read: ${filePath}]`;
 
     try {
-      const content = await fs.readFile(filePath, 'utf8');
-      this.fileCache.set(filePath, content);
-      return content;
+      const stat = await fs.stat(absolutePath);
+      if (!stat.isFile() || stat.size > this.options.maxFileSize) {
+        return `[Could not read: ${filePath}]`;
+      }
+      return await fs.readFile(absolutePath, 'utf8');
     } catch {
       return `[Could not read: ${filePath}]`;
     }
@@ -143,7 +170,7 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
 
     if (pattern) {
       const regex = this.patternToRegex(pattern);
-      return results.filter((f) => regex.test(f.path));
+      return results.filter((f) => regex.test(normalizeWorkspacePath(f.path)));
     }
 
     return results;
@@ -161,11 +188,38 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
   }
 
   private patternToRegex(pattern: string): RegExp {
-    const escaped = pattern
+    const normalizedPattern = normalizeWorkspacePath(pattern);
+    const globStar = '\u0000';
+    const escaped = normalizedPattern
+      .replace(/\*\*/g, globStar)
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '.*')
-      .replace(/\?/g, '.');
+      .replace(/\*/g, '[^/]*')
+      .replace(/\?/g, '[^/]')
+      .replace(new RegExp(globStar, 'g'), '.*');
     return new RegExp(`^${escaped}$`, 'i');
+  }
+
+  private async resolveWorkspaceFile(filePath: string): Promise<string | null> {
+    if (!this.rootDir || !this.rootRealPath || filePath.includes('\0') || path.isAbsolute(filePath)) {
+      return null;
+    }
+
+    const rawSegments = filePath.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (rawSegments.length === 0 || rawSegments.some((segment) => segment === '..' || this.ignoredDirs.has(segment))) {
+      return null;
+    }
+
+    const absolutePath = path.resolve(this.rootDir, ...rawSegments);
+    if (!isWithinRoot(this.rootDir, absolutePath)) {
+      return null;
+    }
+
+    const realPath = await fs.realpath(absolutePath).catch(() => absolutePath);
+    if (!isWithinRoot(this.rootRealPath, realPath)) {
+      return null;
+    }
+
+    return absolutePath;
   }
 
   async generateRepoSummary(): Promise<string> {
@@ -200,4 +254,13 @@ export class InMemoryWorkspaceIndex implements WorkspaceIndex {
 
     return parts.join('\n');
   }
+}
+
+function normalizeWorkspacePath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').split('/').filter(Boolean).join('/');
+}
+
+function isWithinRoot(rootDir: string, candidatePath: string): boolean {
+  const relative = path.relative(rootDir, candidatePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }

@@ -7,7 +7,7 @@ import {
   type FileKind,
 } from '@ide/workspace-core';
 
-import { WorkspaceWriter, type GuardedWorkspacePath } from '../workspace-writer';
+import { WorkspacePathError, WorkspaceWriter, type GuardedWorkspacePath } from '../workspace-writer';
 
 type WorkspaceFileErrorCode =
   | 'WORKSPACE_NOT_READY'
@@ -145,7 +145,17 @@ export class WorkspaceContextService {
       );
     }
 
-    await this.writer.writeFile(guardedPath.relativePath, input.content);
+    try {
+      await this.writer.writeFile(guardedPath.relativePath, input.content, input.expectedContent);
+    } catch (err) {
+      if (err instanceof WorkspacePathError && err.code === 'WORKSPACE_WRITE_CONFLICT') {
+        throw new WorkspaceFileError(
+          `Workspace file changed since it was loaded: ${guardedPath.relativePath}`,
+          'WORKSPACE_WRITE_CONFLICT',
+        );
+      }
+      throw err;
+    }
     await this.refreshIndex();
 
     return {
@@ -169,7 +179,7 @@ export class WorkspaceContextService {
         const content = await this.index.readFile(file.path);
         if (content.length > this.maxFileSize) continue;
         if (content.toLowerCase().includes(lowerQuery)) {
-          const relativePath = path.relative(this.rootDir, file.path);
+          const relativePath = this.toWorkspaceRelativePath(file.path);
           results.push({ path: relativePath, content });
         }
       } catch {}
@@ -246,7 +256,8 @@ export class WorkspaceContextService {
   }
 
   private toWorkspaceRelativePath(filePath: string): string {
-    if (!this.rootDir) return filePath;
+    const normalized = filePath.replace(/\\/g, '/');
+    if (!this.rootDir || !path.isAbsolute(filePath)) return normalized;
     return path.relative(this.rootDir, filePath).split(path.sep).join('/');
   }
 }

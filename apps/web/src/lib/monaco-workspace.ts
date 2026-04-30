@@ -270,7 +270,15 @@ export function getMonacoModelPath(workspaceRoot: string, filePath: string): str
   const normalizedPath = normalizeWorkspacePath(filePath);
   const joinedPath = normalizedPath ? `${normalizedRoot}/${normalizedPath}` : normalizedRoot;
   const uriPath = /^[A-Za-z]:/.test(joinedPath) ? `/${joinedPath}` : joinedPath;
-  return encodeURI(`file://${uriPath}`);
+  const encodedPath = uriPath
+    .split('/')
+    .map((segment, index) => {
+      if (index === 0 && segment === '') return '';
+      if (index === 1 && /^[A-Za-z]:$/.test(segment)) return segment;
+      return encodeURIComponent(segment);
+    })
+    .join('/');
+  return `file://${encodedPath}`;
 }
 
 export function getMonacoLanguage(filePath: string): string {

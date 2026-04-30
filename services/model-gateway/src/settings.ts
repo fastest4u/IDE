@@ -255,10 +255,27 @@ function normalizeLocalProviders(providers: LocalProviderSettings[]): LocalProvi
     .map((provider) => ({
       providerId: provider.providerId,
       enabled: Boolean(provider.enabled),
-      baseUrl: provider.baseUrl?.trim() || (provider.providerId === 'ollama' ? 'http://127.0.0.1:11434' : 'http://127.0.0.1:8000'),
+      baseUrl: normalizeLocalProviderBaseUrl(provider.providerId, provider.baseUrl),
       models: provider.models.map((model) => model.trim()).filter(Boolean),
       timeoutMs: provider.timeoutMs > 0 ? provider.timeoutMs : 60000,
     }));
+}
+
+function normalizeLocalProviderBaseUrl(
+  providerId: LocalProviderSettings['providerId'],
+  value: string | undefined,
+): string {
+  const fallback = providerId === 'ollama' ? 'http://127.0.0.1:11434' : 'http://127.0.0.1:8000';
+  const raw = value?.trim() || fallback;
+
+  try {
+    const url = new URL(raw);
+    const isHttp = url.protocol === 'http:' || url.protocol === 'https:';
+    const isLoopback = url.hostname === 'localhost' || url.hostname === '::1' || url.hostname.startsWith('127.');
+    return isHttp && isLoopback ? url.toString().replace(/\/+$/, '') : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function mergeWorkspaceOverrides(

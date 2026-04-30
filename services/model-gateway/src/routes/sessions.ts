@@ -13,8 +13,8 @@ export const registerSessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = a
   const controller = options.controller;
 
   app.get('/sessions', async () => {
-    const store = controller.getSessionState;
-    return { sessions: [] };
+    const sessions = await controller.listSessions();
+    return { sessions };
   });
 
   app.get('/sessions/:sessionId', async (request) => {

@@ -11,7 +11,9 @@ import type {
   ProviderTestConnectionResponse,
 } from '@ide/protocol';
 
-const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:3001';
+const configuredGatewayUrl = import.meta.env.VITE_MODEL_GATEWAY_URL?.trim();
+
+export const MODEL_GATEWAY_URL = (configuredGatewayUrl || 'http://127.0.0.1:3001').replace(/\/+$/, '');
 
 export interface WorkspaceSummaryResponse {
   summary: string;
@@ -91,7 +93,7 @@ export async function generateAIResponse(prompt: string, context: Partial<AIRequ
     tools: context.tools,
   };
 
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/ai/generate`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/ai/generate`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(request),
@@ -136,7 +138,7 @@ export async function streamAIResponse(
     tools: context.tools,
   };
 
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/ai/stream`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/ai/stream`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(request),
@@ -151,6 +153,28 @@ export async function streamAIResponse(
   let buffer = '';
   let assembledText = '';
 
+  const handleStreamPart = (part: string) => {
+    const payload = part
+      .split('\n')
+      .filter((entry) => entry.startsWith('data: '))
+      .map((entry) => entry.slice(6))
+      .join('\n');
+
+    if (!payload || payload === '[DONE]') {
+      return;
+    }
+
+    try {
+      const event = JSON.parse(payload) as AIStreamEvent;
+      onEvent?.(event);
+      if (event.type === 'delta') {
+        assembledText += event.text;
+      }
+    } catch {
+      onEvent?.({ type: 'warning', message: 'Skipped malformed stream event from model gateway.' });
+    }
+  };
+
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -160,19 +184,13 @@ export async function streamAIResponse(
     buffer = parts.pop() ?? '';
 
     for (const part of parts) {
-      const line = part
-        .split('\n')
-        .find((entry) => entry.startsWith('data: '))
-        ?.slice(6);
-
-      if (!line) continue;
-
-      const event = JSON.parse(line) as AIStreamEvent;
-      onEvent?.(event);
-      if (event.type === 'delta') {
-        assembledText += event.text;
-      }
+      handleStreamPart(part);
     }
+  }
+
+  const remaining = `${buffer}${decoder.decode()}`.trim();
+  if (remaining) {
+    handleStreamPart(remaining);
   }
 
   return assembledText;
@@ -188,7 +206,7 @@ async function readPatchResponse(response: Response, action: string): Promise<Pa
 }
 
 export async function listPatches(): Promise<PatchRecord[]> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/patches`);
+  const response = await fetch(`${MODEL_GATEWAY_URL}/patches`);
   if (!response.ok) {
     throw new Error(`List patches failed with ${response.status}`);
   }
@@ -197,7 +215,7 @@ export async function listPatches(): Promise<PatchRecord[]> {
 }
 
 export async function createPatch(input: PatchCreateRequest): Promise<PatchRecord> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/patches`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/patches`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -206,7 +224,7 @@ export async function createPatch(input: PatchCreateRequest): Promise<PatchRecor
 }
 
 export async function approvePatch(patchId: string): Promise<PatchRecord> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/patches/${patchId}/approve`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/patches/${patchId}/approve`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
   });
@@ -214,7 +232,7 @@ export async function approvePatch(patchId: string): Promise<PatchRecord> {
 }
 
 export async function rejectPatch(patchId: string): Promise<PatchRecord> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/patches/${patchId}/reject`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/patches/${patchId}/reject`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
   });
@@ -222,7 +240,7 @@ export async function rejectPatch(patchId: string): Promise<PatchRecord> {
 }
 
 export async function reviewPatch(patchId: string): Promise<PatchRecord> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/patches/${patchId}/review`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/patches/${patchId}/review`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
   });
@@ -230,7 +248,7 @@ export async function reviewPatch(patchId: string): Promise<PatchRecord> {
 }
 
 export async function applyPatch(patchId: string): Promise<PatchRecord> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/patches/${patchId}/apply`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/patches/${patchId}/apply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
   });
@@ -238,7 +256,7 @@ export async function applyPatch(patchId: string): Promise<PatchRecord> {
 }
 
 export async function rollbackPatch(patchId: string): Promise<PatchRecord> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/patches/${patchId}/rollback`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/patches/${patchId}/rollback`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
   });
@@ -246,7 +264,7 @@ export async function rollbackPatch(patchId: string): Promise<PatchRecord> {
 }
 
 export async function getSettings(): Promise<IDESettings> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/settings`);
+  const response = await fetch(`${MODEL_GATEWAY_URL}/settings`);
   if (!response.ok) {
     throw new Error(`Get settings failed with ${response.status}`);
   }
@@ -255,7 +273,7 @@ export async function getSettings(): Promise<IDESettings> {
 }
 
 export async function updateSettings(input: IDESettingsUpdate): Promise<IDESettings> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/settings`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/settings`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -268,7 +286,7 @@ export async function updateSettings(input: IDESettingsUpdate): Promise<IDESetti
 }
 
 export async function updateWorkspaceOverride(workspaceId: string, override: Record<string, unknown> | null): Promise<IDESettings> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/settings/workspace/${encodeURIComponent(workspaceId)}`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/settings/workspace/${encodeURIComponent(workspaceId)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ override }),
@@ -281,7 +299,7 @@ export async function updateWorkspaceOverride(workspaceId: string, override: Rec
 }
 
 export async function getProviderRuntimeStatus(): Promise<ProviderRuntimeStatusResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/settings/provider-status`);
+  const response = await fetch(`${MODEL_GATEWAY_URL}/settings/provider-status`);
   if (!response.ok) {
     throw await readError(response, 'Get provider status');
   }
@@ -289,7 +307,7 @@ export async function getProviderRuntimeStatus(): Promise<ProviderRuntimeStatusR
 }
 
 export async function testProviderConnection(providerId: ProviderId): Promise<ProviderTestConnectionResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/settings/providers/${providerId}/test`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/settings/providers/${providerId}/test`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
   });
@@ -300,7 +318,7 @@ export async function testProviderConnection(providerId: ProviderId): Promise<Pr
 }
 
 export async function getWorkspaceSummary(): Promise<WorkspaceSummaryResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/workspace/summary`);
+  const response = await fetch(`${MODEL_GATEWAY_URL}/workspace/summary`);
   if (!response.ok) {
     throw await readError(response, 'Get workspace summary');
   }
@@ -308,7 +326,7 @@ export async function getWorkspaceSummary(): Promise<WorkspaceSummaryResponse> {
 }
 
 export async function listWorkspaceFiles(): Promise<WorkspaceFilesResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/workspace/files`);
+  const response = await fetch(`${MODEL_GATEWAY_URL}/workspace/files`);
   if (!response.ok) {
     throw await readError(response, 'List workspace files');
   }
@@ -316,7 +334,7 @@ export async function listWorkspaceFiles(): Promise<WorkspaceFilesResponse> {
 }
 
 export async function indexWorkspace(rootDir: string): Promise<WorkspaceIndexResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/workspace/index`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/workspace/index`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rootDir }),
@@ -328,7 +346,7 @@ export async function indexWorkspace(rootDir: string): Promise<WorkspaceIndexRes
 }
 
 export async function pickWorkspaceDirectory(defaultPath?: string): Promise<WorkspacePickResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/workspace/pick`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/workspace/pick`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(defaultPath ? { defaultPath } : {}),
@@ -340,7 +358,7 @@ export async function pickWorkspaceDirectory(defaultPath?: string): Promise<Work
 }
 
 export async function getWorkspaceFile(filePath: string): Promise<WorkspaceFileResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/workspace/file?path=${encodeURIComponent(filePath)}`);
+  const response = await fetch(`${MODEL_GATEWAY_URL}/workspace/file?path=${encodeURIComponent(filePath)}`);
   if (!response.ok) {
     throw await readError(response, 'Get workspace file');
   }
@@ -352,7 +370,7 @@ export async function saveWorkspaceFile(
   content: string,
   expectedContent?: string,
 ): Promise<WorkspaceSaveResponse> {
-  const response = await fetch(`${DEFAULT_GATEWAY_URL}/workspace/file`, {
+  const response = await fetch(`${MODEL_GATEWAY_URL}/workspace/file`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path: filePath, content, expectedContent }),
@@ -365,7 +383,7 @@ export async function saveWorkspaceFile(
 
 export async function fetchTerminalOutput(): Promise<string> {
   try {
-    const response = await fetch(`${DEFAULT_GATEWAY_URL}/terminal/output`);
+    const response = await fetch(`${MODEL_GATEWAY_URL}/terminal/output`);
     if (!response.ok) return '';
     const body = (await response.json()) as { output: string };
     return body.output;

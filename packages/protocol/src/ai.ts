@@ -80,7 +80,6 @@ export interface AIResponse {
   providerId: ProviderId;
   modelId: string;
   text?: string;
-  stream?: AsyncIterable<AIStreamEvent>;
   usage?: AIUsage;
   warnings?: string[];
   metadata?: Record<string, unknown>;

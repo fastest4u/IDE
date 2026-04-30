@@ -49,6 +49,20 @@ export interface ModelGatewayServerOptions {
   workspacePicker?: WorkspacePickerService;
 }
 
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://127.0.0.1:5173',
+  'http://localhost:5173',
+  'http://127.0.0.1:4173',
+  'http://localhost:4173',
+];
+
+function getAllowedOrigins(): string[] {
+  const configured = process.env.IDE_ALLOWED_ORIGINS?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return configured?.length ? configured : DEFAULT_ALLOWED_ORIGINS;
+}
+
 function buildAdapter(config: ProviderConnectionConfig): ProviderAdapter | null {
   switch (config.providerId) {
     case 'anthropic':
@@ -166,13 +180,15 @@ export async function createModelGatewayServer(
     settingsService,
   );
 
+  const allowedOrigins = getAllowedOrigins();
+
   await app.register(cors, {
-    origin: process.env.IDE_ALLOWED_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? true,
+    origin: allowedOrigins,
     credentials: true,
   });
 
   app.addHook('onRequest', createOriginGuard({
-    allowedOrigins: process.env.IDE_ALLOWED_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean),
+    allowedOrigins,
     maxBodyBytes: Number(process.env.IDE_MAX_BODY_BYTES ?? '262144'),
   }));
 
@@ -209,7 +225,7 @@ export async function startModelGatewayServer(options: ModelGatewayServerOptions
     workspacePicker: options.workspacePicker,
   });
   const port = options.port ?? 3001;
-  const host = options.host ?? '0.0.0.0';
+  const host = options.host ?? '127.0.0.1';
 
   await app.listen({ port, host });
   return app;

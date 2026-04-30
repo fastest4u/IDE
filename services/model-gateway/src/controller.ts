@@ -112,7 +112,7 @@ export class AIController {
     };
   }
 
-  async handleStream(request: AIRequest): Promise<AsyncIterable<AIStreamEvent>> {
+  async handleStream(request: AIRequest, options: { signal?: AbortSignal } = {}): Promise<AsyncIterable<AIStreamEvent>> {
     const policyRequest = this.applyLocalPolicy(
       this.withPatchTooling(await this.enrichWithWorkspace(request)),
     );
@@ -155,6 +155,7 @@ export class AIController {
       temperature: policyRequest.temperature,
       tools: policyRequest.tools,
       stream: true,
+      signal: options.signal,
     });
     return this.recordPatchToolCalls(stream, policyRequest);
   }
@@ -313,6 +314,10 @@ export class AIController {
 
   getSessionState(sessionId: string): Promise<TaskState | null> {
     return this.sessionStore.getTaskState(sessionId);
+  }
+
+  listSessions(): Promise<string[]> {
+    return this.sessionStore.listSessions();
   }
 
   addDecision(sessionId: string, decision: string): Promise<void> {

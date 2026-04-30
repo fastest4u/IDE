@@ -76,20 +76,12 @@ export class FileBackedPatchStore extends PatchStore {
     super();
   }
 
-  override create(record: Omit<PatchRecord, 'createdAt' | 'updatedAt'>): PatchRecord {
-    const created = super.create(record);
-    void this.persist();
-    return created;
-  }
-
-  override update(id: string, patch: Partial<Omit<PatchRecord, 'id' | 'createdAt'>>): PatchRecord | null {
-    const updated = super.update(id, patch);
-    void this.persist();
-    return updated;
-  }
-
   override list(): PatchRecord[] {
     return super.list();
+  }
+
+  async persistNow(): Promise<void> {
+    await this.persist();
   }
 
   async hydrate(): Promise<void> {
@@ -152,6 +144,7 @@ export class PatchService {
       notes: review.findings.map(formatReviewFinding),
     });
 
+    await this.persistStore();
     await this.recordPatchMemory(patch, 'created');
     return patch;
   }
@@ -174,6 +167,7 @@ export class PatchService {
     const reviewNotes = review.findings.map(formatReviewFinding);
     if (review.status === 'blocked') {
       const updated = this.store.update(id, { review, notes: ['Patch approval blocked by verifier checks', ...reviewNotes] });
+      if (updated) await this.persistStore();
       if (updated) await this.recordPatchMemory(updated, 'review_blocked');
       throw new PatchServiceError('Patch approval blocked by verifier checks', 409, 'PATCH_REVIEW_BLOCKED');
     }
@@ -185,6 +179,7 @@ export class PatchService {
     if (!current) return null;
     const review = await this.reviewOperations(current.operations);
     const updated = this.store.update(id, { review, notes: review.findings.map(formatReviewFinding) });
+    if (updated) await this.persistStore();
     if (updated) await this.recordPatchMemory(updated, 'reviewed');
     return updated;
   }
@@ -207,11 +202,11 @@ export class PatchService {
         this.assertPrecondition(operation, previousContent);
         if (operation.kind === 'write_file') {
           if (operation.afterContent === undefined) throw new PatchServiceError('write_file operation requires afterContent');
-          await this.writer.writeFile(operation.filePath, operation.afterContent);
+          await this.writer.writeFile(operation.filePath, operation.afterContent, operation.beforeContent ?? (previousContent ?? ''));
           rollbackEntries.push({ filePath: operation.filePath, previousContent, appliedContent: operation.afterContent, appliedAt });
           continue;
         }
-        await this.writer.deleteFile(operation.filePath);
+        await this.writer.deleteFile(operation.filePath, operation.beforeContent ?? (previousContent ?? ''));
         rollbackEntries.push({ filePath: operation.filePath, previousContent, appliedContent: null, appliedAt });
       }
     } catch (err) {
@@ -223,6 +218,7 @@ export class PatchService {
       throw err;
     }
     const applied = this.store.update(id, { status: 'applied', rollback: { available: true, entries: rollbackEntries }, notes: ['Patch applied successfully'] });
+    if (applied) await this.persistStore();
     if (applied) await this.recordPatchMemory(applied, 'applied');
     return applied;
   }
@@ -235,6 +231,7 @@ export class PatchService {
     }
     await this.rollbackEntries(current.rollback.entries);
     const rolledBack = this.store.update(id, { status: 'rolled_back', rollback: { ...current.rollback, available: false, rolledBackAt: new Date().toISOString() }, notes: ['Patch rolled back successfully'] });
+    if (rolledBack) await this.persistStore();
     if (rolledBack) await this.recordPatchMemory(rolledBack, 'rolled_back');
     return rolledBack;
   }
@@ -243,8 +240,15 @@ export class PatchService {
     const patch: Partial<Omit<PatchRecord, 'id' | 'createdAt'>> = { status, notes };
     if (review) patch.review = review;
     const updated = this.store.update(id, patch);
+    if (updated) await this.persistStore();
     if (updated) await this.recordPatchMemory(updated, status);
     return updated;
+  }
+
+  private async persistStore(): Promise<void> {
+    if ('persistNow' in this.store && typeof this.store.persistNow === 'function') {
+      await this.store.persistNow();
+    }
   }
 
   private async reviewOperations(operations: PatchOperation[]): Promise<PatchReviewResult> {

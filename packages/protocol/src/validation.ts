@@ -4,7 +4,7 @@ export interface SafetyPolicy {
   redactSecrets: boolean;
   allowShellCommands: boolean;
   requireApprovalForDestructiveActions: boolean;
-  blockedPatterns?: RegExp[];
+  blockedPatterns?: Array<{ pattern: string; flags?: string }>;
   metadata?: Record<string, unknown>;
 }
 

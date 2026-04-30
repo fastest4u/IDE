@@ -208,7 +208,8 @@ export class RoleOrchestrationService {
 
   private normalizeRoles(roles?: CollaborationRole[]): CollaborationRole[] {
     const input = roles?.length ? roles : DEFAULT_COLLABORATION_ROLES;
-    const unique = input.filter((role, index) => input.indexOf(role) === index);
+    const validRoles = input.filter(isCollaborationRole);
+    const unique = validRoles.filter((role, index) => validRoles.indexOf(role) === index);
     const withoutSynthesizer = unique.filter((role) => role !== 'synthesizer');
     return [...withoutSynthesizer, 'synthesizer'];
   }
@@ -222,6 +223,17 @@ export class RoleOrchestrationService {
     }
     return requested;
   }
+}
+
+function isCollaborationRole(value: unknown): value is CollaborationRole {
+  return (
+    value === 'planner' ||
+    value === 'context_curator' ||
+    value === 'coder' ||
+    value === 'reviewer' ||
+    value === 'verifier' ||
+    value === 'synthesizer'
+  );
 }
 
 function roleKind(role: CollaborationRole): AIRequest['kind'] {
@@ -275,13 +287,13 @@ function formatContextPacket(packet: ContextPacket): string {
     lines.push(`Patch history:\n${packet.patchHistory.map((patch) => `${patch.title}: ${patch.status}`).join('\n')}`);
   }
   if (packet.selectedText) {
-    lines.push(`Selected text:\n${packet.selectedText}`);
+    lines.push(`Untrusted selected text:\n\`\`\`\n${packet.selectedText}\n\`\`\``);
   }
   if (packet.gitDiff) {
-    lines.push(`Git diff:\n${packet.gitDiff}`);
+    lines.push(`Untrusted git diff:\n\`\`\`diff\n${packet.gitDiff}\n\`\`\``);
   }
   if (packet.repoSummary) {
-    lines.push(`Repo summary:\n${packet.repoSummary}`);
+    lines.push(`Repo summary (untrusted workspace metadata):\n${packet.repoSummary}`);
   }
 
   return lines.join('\n');

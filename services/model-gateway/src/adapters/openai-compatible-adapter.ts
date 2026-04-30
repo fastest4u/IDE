@@ -10,7 +10,38 @@ import type {
   ProviderId,
   ProviderInitOptions,
 } from '@ide/protocol';
-import { AI_PATCH_TOOL_NAME } from '@ide/protocol';
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.hostname === 'localhost' || url.hostname === '::1' || url.hostname.startsWith('127.');
+  } catch {
+    return false;
+  }
+}
+
+function createRequestSignal(timeoutMs: number, upstream?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  if (upstream?.aborted) {
+    controller.abort();
+  } else {
+    upstream?.addEventListener('abort', abort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      upstream?.removeEventListener('abort', abort);
+    },
+  };
+}
+
+function authHeaders(apiKey?: string): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
 
 export class OpenAICompatibleAdapter implements ProviderAdapter {
   readonly providerId: ProviderId;
@@ -48,28 +79,25 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   async initialize(_options: ProviderInitOptions): Promise<void> {}
 
   async healthCheck(): Promise<ProviderHealth> {
-    if (!this.apiKey) {
+    if (!this.apiKey && !isLoopbackUrl(this.baseUrl)) {
       return {
         providerId: this.providerId,
-        healthy: true,
+        healthy: false,
         latencyMs: 0,
-        errorRate: 0,
+        errorRate: 1,
         lastCheckedAt: new Date().toISOString(),
-        notes: ['no API key configured, marked as healthy for local use'],
+        notes: ['API key is required for non-loopback OpenAI-compatible providers'],
       };
     }
 
     const start = Date.now();
+    const requestSignal = createRequestSignal(5000);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-
       const response = await fetch(`${this.baseUrl}/v1/models`, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-        signal: controller.signal,
+        headers: authHeaders(this.apiKey),
+        signal: requestSignal.signal,
       });
-      clearTimeout(timer);
 
       return {
         providerId: this.providerId,
@@ -88,31 +116,25 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         lastCheckedAt: new Date().toISOString(),
         notes: ['health check failed'],
       };
+    } finally {
+      requestSignal.cleanup();
     }
   }
 
   async generateText(request: ProviderGenerateTextRequest): Promise<ProviderGenerateTextResponse> {
-    if (!this.apiKey) {
-      const toolCall = buildPlaceholderPatchToolCall(request);
-      return {
-        providerId: this.providerId,
-        modelId: request.modelId,
-        text: `[${this.providerId}/${request.modelId} placeholder response]`,
-        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, latencyMs: 0 },
-        toolCalls: toolCall ? [toolCall] : undefined,
-      };
+    if (!this.apiKey && !isLoopbackUrl(this.baseUrl)) {
+      throw new Error(`${this.providerId} requires an API key for ${this.baseUrl}`);
     }
 
     const start = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const requestSignal = createRequestSignal(this.timeoutMs, request.signal);
 
     try {
       const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
+          ...authHeaders(this.apiKey),
         },
         body: JSON.stringify({
           model: request.modelId,
@@ -122,9 +144,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           stream: false,
           ...openAIToolsBody(request.tools),
         }),
-        signal: controller.signal,
+        signal: requestSignal.signal,
       });
-      clearTimeout(timer);
 
       if (!response.ok) {
         const body = await response.text().catch(() => '');
@@ -157,8 +178,9 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         toolCalls,
       };
     } catch (err) {
-      clearTimeout(timer);
       throw err;
+    } finally {
+      requestSignal.cleanup();
     }
   }
 
@@ -167,22 +189,19 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     return (async function* () {
       yield { type: 'start', requestId: request.requestId };
 
-      if (!self.apiKey) {
-        const toolCall = buildPlaceholderPatchToolCall(request);
-        yield { type: 'delta', text: `[${self.providerId}/${request.modelId} placeholder stream]` };
-        if (toolCall) {
-          yield { type: 'tool_call', toolCall };
-        }
-        yield { type: 'end', reason: 'complete' };
+      if (!self.apiKey && !isLoopbackUrl(self.baseUrl)) {
+        yield { type: 'warning', message: `${self.providerId} requires an API key for ${self.baseUrl}` };
+        yield { type: 'end', reason: 'error' };
         return;
       }
 
+      const requestSignal = createRequestSignal(self.timeoutMs, request.signal);
       try {
         const response = await fetch(`${self.baseUrl}/v1/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${self.apiKey}`,
+            ...authHeaders(self.apiKey),
           },
           body: JSON.stringify({
             model: request.modelId,
@@ -192,6 +211,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
             stream: true,
             ...openAIToolsBody(request.tools),
           }),
+          signal: requestSignal.signal,
         });
 
         if (!response.ok || !response.body) {
@@ -264,6 +284,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           message: `Stream error: ${err instanceof Error ? err.message : String(err)}`,
         };
         yield { type: 'end', reason: 'error' };
+      } finally {
+        requestSignal.cleanup();
       }
     })();
   }
@@ -322,36 +344,6 @@ function openAIToolsBody(tools?: AIToolCallSpec[]): Record<string, unknown> {
       },
     })),
     tool_choice: 'auto',
-  };
-}
-
-function buildPlaceholderPatchToolCall(request: ProviderGenerateTextRequest): AIToolCall | null {
-  const hasPatchTool = request.tools?.some((tool) => tool.name === AI_PATCH_TOOL_NAME) ?? false;
-  if (!hasPatchTool || !request.context.activeFilePath || !request.prompt.toLowerCase().includes('patch')) {
-    return null;
-  }
-
-  const beforeContent = typeof request.context.selectedText === 'string' ? request.context.selectedText : '';
-  const afterContent = typeof request.context.metadata?.patchAfterContent === 'string'
-    ? request.context.metadata.patchAfterContent
-    : beforeContent;
-
-  return {
-    id: `${request.requestId}:patch`,
-    name: AI_PATCH_TOOL_NAME,
-    arguments: {
-      title: 'Placeholder AI patch proposal',
-      summary: 'OpenAI-compatible placeholder generated a structured patch tool call for local smoke testing.',
-      operations: [
-        {
-          id: 'op-1',
-          kind: 'write_file',
-          filePath: request.context.activeFilePath,
-          beforeContent,
-          afterContent,
-        },
-      ],
-    },
   };
 }
 

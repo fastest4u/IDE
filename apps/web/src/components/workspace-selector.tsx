@@ -95,7 +95,12 @@ function useRecentWorkspaces() {
     });
   }, []);
 
-  return { recent, addRecent, removeRecent };
+  const clearRecent = useCallback(() => {
+    setRecent([]);
+    localStorage.removeItem(RECENT_WORKSPACES_KEY);
+  }, []);
+
+  return { recent, addRecent, removeRecent, clearRecent };
 }
 
 export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSelectorProps) {
@@ -103,7 +108,7 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
   const [isIndexing, setIsIndexing] = useState(false);
   const [isBrowsing, setIsBrowsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { recent, addRecent, removeRecent } = useRecentWorkspaces();
+  const { recent, addRecent, removeRecent, clearRecent } = useRecentWorkspaces();
   const queryClient = useQueryClient();
 
   const indexMutation = useMutation({
@@ -172,8 +177,7 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
     indexMutation.mutate(workspace.path);
   }, [indexMutation]);
 
-  const handleRemoveRecent = useCallback((e: React.MouseEvent, path: string) => {
-    e.stopPropagation();
+  const handleRemoveRecent = useCallback((path: string) => {
     removeRecent(path);
   }, [removeRecent]);
 
@@ -229,7 +233,7 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
             </p>
           </div>
           {onSkip && (
-            <button className="workspace-selector__skip" onClick={onSkip}>
+            <button type="button" className="workspace-selector__skip" onClick={onSkip}>
               Skip for now
             </button>
           )}
@@ -240,17 +244,19 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
           {/* Open Folder */}
           <section className="workspace-selector__section">
             <h2 className="workspace-selector__section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__section-icon" aria-hidden="true">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
               </svg>
               Open Folder
             </h2>
             <div className="workspace-selector__input-row">
               <div className="workspace-selector__input-wrapper">
-                <svg className="workspace-selector__input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg className="workspace-selector__input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
+                <label className="app-shell__sr-only" htmlFor="workspace-root-input">Workspace path</label>
                 <input
+                  id="workspace-root-input"
                   type="text"
                   className="workspace-selector__input"
                   placeholder="/Users/name/project or C:\\Users\\name\\project"
@@ -261,29 +267,31 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
                 />
               </div>
               <button
+                type="button"
                 className="workspace-selector__button workspace-selector__button--secondary"
                 onClick={() => void handleBrowseFolder()}
                 disabled={isIndexing || isBrowsing}
                 title="Choose a workspace folder from this machine"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__button-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__button-icon" aria-hidden="true">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
                 {isBrowsing ? 'Choosing...' : 'Browse'}
               </button>
               <button
+                type="button"
                 className="workspace-selector__button workspace-selector__button--primary"
                 onClick={handleOpenFolder}
                 disabled={isIndexing || isBrowsing || !pathInput.trim()}
               >
                 {isIndexing ? (
                   <>
-                    <span className="workspace-selector__spinner" />
+                    <span className="workspace-selector__spinner" aria-hidden="true" />
                     Indexing...
                   </>
                 ) : (
                   <>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__button-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__button-icon" aria-hidden="true">
                       <path d="M5 12h14M12 5l7 7-7 7" />
                     </svg>
                     Open
@@ -295,8 +303,8 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
               Use `Browse` to open a native folder chooser on the machine running the gateway, or paste the workspace root path directly. `~` is supported for manual entry.
             </p>
             {error && (
-              <div className="workspace-selector__error">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__error-icon">
+              <div className="workspace-selector__error" role="alert" aria-live="polite">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__error-icon" aria-hidden="true">
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 8v4M12 16h.01" />
                 </svg>
@@ -308,26 +316,34 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
           {/* Recent Workspaces */}
           {recent.length > 0 && (
             <section className="workspace-selector__section">
-              <h2 className="workspace-selector__section-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__section-icon">
+              <div className="workspace-selector__section-title-row">
+                <h2 className="workspace-selector__section-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="workspace-selector__section-icon" aria-hidden="true">
                   <circle cx="12" cy="12" r="10" />
                   <polyline points="12 6 12 12 16 14" />
                 </svg>
                 Recent Workspaces
               </h2>
+              <button type="button" className="workspace-selector__link-button" onClick={clearRecent}>Clear all</button>
+              </div>
               <div className="workspace-selector__grid">
                 {recent.map((workspace) => (
-                  <button
+                  <div
                     key={workspace.id}
                     className="workspace-selector__card"
-                    onClick={() => handleRecentClick(workspace)}
-                    disabled={isIndexing}
                   >
-                    <div className="workspace-selector__card-icon">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <button
+                      type="button"
+                      className="workspace-selector__card-main"
+                      onClick={() => handleRecentClick(workspace)}
+                      disabled={isIndexing}
+                      aria-label={`Open workspace ${workspace.name}`}
+                    >
+                    <span className="workspace-selector__card-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                       </svg>
-                    </div>
+                    </span>
                     <div className="workspace-selector__card-content">
                       <h3 className="workspace-selector__card-title">{workspace.name}</h3>
                       <p className="workspace-selector__card-path" title={workspace.path}>
@@ -335,7 +351,7 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
                       </p>
                       <div className="workspace-selector__card-meta">
                         <span className="workspace-selector__card-files">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                             <polyline points="14 2 14 8 20 8" />
                           </svg>
@@ -344,16 +360,19 @@ export function WorkspaceSelector({ onWorkspaceSelected, onSkip }: WorkspaceSele
                         <span>{formatDate(workspace.lastOpened)}</span>
                       </div>
                     </div>
+                    </button>
                     <button
+                      type="button"
                       className="workspace-selector__card-remove"
-                      onClick={(e) => handleRemoveRecent(e, workspace.path)}
+                      onClick={() => handleRemoveRecent(workspace.path)}
+                      aria-label={`Remove ${workspace.name} from recent workspaces`}
                       title="Remove from recent"
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                         <path d="M18 6L6 18M6 6l12 12" />
                       </svg>
                     </button>
-                  </button>
+                  </div>
                 ))}
               </div>
             </section>

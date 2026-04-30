@@ -33,34 +33,23 @@ export class AnthropicAdapter implements ProviderAdapter {
   async healthCheck(): Promise<ProviderHealth> {
     return {
       providerId: this.providerId,
-      healthy: true,
-      latencyMs: 50,
-      errorRate: 0,
-      quotaRemaining: 100,
+      healthy: false,
+      latencyMs: 0,
+      errorRate: 1,
       lastCheckedAt: new Date().toISOString(),
+      notes: ['Anthropic adapter is not implemented yet'],
     };
   }
 
   async generateText(request: ProviderGenerateTextRequest): Promise<ProviderGenerateTextResponse> {
-    return {
-      providerId: this.providerId,
-      modelId: request.modelId,
-      text: `Anthropic placeholder response for ${request.requestId}`,
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        estimatedCostUsd: 0,
-        latencyMs: 0,
-      },
-    };
+    throw new Error(`Anthropic adapter is not implemented for request ${request.requestId}`);
   }
 
   async streamText(request: ProviderGenerateTextRequest): Promise<AsyncIterable<AIStreamEvent>> {
     return (async function* () {
       yield { type: 'start', requestId: request.requestId };
-      yield { type: 'delta', text: 'Anthropic stream placeholder' };
-      yield { type: 'end', reason: 'complete' };
+      yield { type: 'warning', message: 'Anthropic adapter is not implemented yet' };
+      yield { type: 'end', reason: 'error' };
     })();
   }
 

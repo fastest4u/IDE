@@ -105,18 +105,36 @@ function getEditorLanguage(filePath: string): string {
   return 'plaintext';
 }
 
-function useMonacoWorkspaceDocumentsQuery(enabled: boolean, workspaceFiles: string[]) {
-  const monacoWorkspaceFiles = useMemo(() => workspaceFiles.filter(isMonacoWorkspaceFile), [workspaceFiles]);
+const MAX_MONACO_WORKSPACE_FILES = 120;
+const MONACO_DOCUMENT_BATCH_SIZE = 8;
+
+function useMonacoWorkspaceDocumentsQuery(enabled: boolean, workspaceFiles: string[], activeFile: string) {
+  const monacoWorkspaceFiles = useMemo(() => {
+    const candidates = workspaceFiles.filter(isMonacoWorkspaceFile);
+    if (activeFile && isMonacoWorkspaceFile(activeFile)) {
+      return [activeFile, ...candidates.filter((filePath) => filePath !== activeFile)].slice(0, MAX_MONACO_WORKSPACE_FILES);
+    }
+    return candidates.slice(0, MAX_MONACO_WORKSPACE_FILES);
+  }, [activeFile, workspaceFiles]);
 
   const query = useQuery({
     queryKey: ['workspace', 'monaco-documents', monacoWorkspaceFiles],
     queryFn: async (): Promise<MonacoWorkspaceDocuments> => {
-      const documents = await Promise.all(
-        monacoWorkspaceFiles.map(async (filePath) => {
-          const file = await getWorkspaceFile(filePath);
-          return [filePath, file.content] as const;
-        }),
-      );
+      const documents: Array<readonly [string, string]> = [];
+      for (let index = 0; index < monacoWorkspaceFiles.length; index += MONACO_DOCUMENT_BATCH_SIZE) {
+        const batch = monacoWorkspaceFiles.slice(index, index + MONACO_DOCUMENT_BATCH_SIZE);
+        const batchDocuments = await Promise.all(
+          batch.map(async (filePath) => {
+            try {
+              const file = await getWorkspaceFile(filePath);
+              return [filePath, file.content] as const;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        documents.push(...batchDocuments.filter((entry): entry is readonly [string, string] => entry !== null));
+      }
 
       return Object.fromEntries(documents);
     },
@@ -552,7 +570,7 @@ export function AppShell() {
   const patchCards = patchesQuery.data ?? [];
   const providerStatuses = providerStatusQuery.data?.providers ?? [];
   const workspaceFiles = workspaceQuery.data?.files ?? [];
-  const monacoWorkspaceDocumentsQuery = useMonacoWorkspaceDocumentsQuery(hasWorkspace, workspaceFiles);
+  const monacoWorkspaceDocumentsQuery = useMonacoWorkspaceDocumentsQuery(hasWorkspace, workspaceFiles, activeFile);
   const workspaceName = workspaceQuery.data?.name ?? 'workspace';
   const workspacePresence: WorkspacePresence = workspaceQuery.isError ? 'error' : workspaceQuery.data?.ready ? 'ready' : 'missing';
   const shouldShowWelcome = !hasExplicitWorkspaceSelection;
@@ -716,6 +734,13 @@ export function AppShell() {
       });
 
       setMessages((current) => current.map((message) => message.id === streamId ? { ...message, content: collectedText || message.content || 'Model gateway returned an empty response.' } : message));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setMessages((current) => current.map((chatMessage) => chatMessage.id === streamId ? {
+        ...chatMessage,
+        content: `Model gateway request failed: ${message}`,
+        warnings: [...(chatMessage.warnings ?? []), 'The stream ended before a complete assistant response was received.'],
+      } : chatMessage));
     } finally {
       setIsStreaming(false);
       await queryClient.invalidateQueries({ queryKey: ['workspace', 'active'] });
@@ -743,16 +768,16 @@ export function AppShell() {
             {healthyProviders} ready
           </span>
           <button type="button" className="app-shell__icon-button" aria-label="Layout">
-            <span className="app-shell__icon app-shell__icon--layout" />
+            <span className="app-shell__icon app-shell__icon--layout" aria-hidden="true" />
           </button>
           <button type="button" className="app-shell__icon-button" aria-label="Search">
-            <span className="app-shell__icon app-shell__icon--search" />
+            <span className="app-shell__icon app-shell__icon--search" aria-hidden="true" />
           </button>
           <button type="button" className="app-shell__icon-button" aria-label="Preferences">
-            <span className="app-shell__icon app-shell__icon--gear" />
+            <span className="app-shell__icon app-shell__icon--gear" aria-hidden="true" />
           </button>
           <button type="button" className="app-shell__icon-button app-shell__icon-button--avatar" aria-label="Account">
-            <span className="app-shell__avatar-dot" />
+            <span className="app-shell__avatar-dot" aria-hidden="true" />
           </button>
         </div>
       </header>
@@ -768,21 +793,21 @@ export function AppShell() {
               <div className="app-shell__activity-logo">
                 <span className="app-shell__activity-mark" />
               </div>
-              <button type="button" className="app-shell__activity-item app-shell__activity-item--active" title="Explorer">
-                <span className="app-shell__activity-glyph app-shell__activity-glyph--files" />
+              <button type="button" className="app-shell__activity-item app-shell__activity-item--active" title="Explorer" aria-label="Explorer">
+                <span className="app-shell__activity-glyph app-shell__activity-glyph--files" aria-hidden="true" />
               </button>
-              <button type="button" className="app-shell__activity-item" title="Search">
-                <span className="app-shell__activity-glyph app-shell__activity-glyph--search" />
+              <button type="button" className="app-shell__activity-item" title="Search" aria-label="Search">
+                <span className="app-shell__activity-glyph app-shell__activity-glyph--search" aria-hidden="true" />
               </button>
-              <button type="button" className="app-shell__activity-item" title="Agent">
-                <span className="app-shell__activity-glyph app-shell__activity-glyph--branch" />
+              <button type="button" className="app-shell__activity-item" title="Agent" aria-label="Agent">
+                <span className="app-shell__activity-glyph app-shell__activity-glyph--branch" aria-hidden="true" />
               </button>
-              <button type="button" className="app-shell__activity-item" title="Settings">
-                <span className="app-shell__activity-glyph app-shell__activity-glyph--run" />
+              <button type="button" className="app-shell__activity-item" title="Settings" aria-label="Settings">
+                <span className="app-shell__activity-glyph app-shell__activity-glyph--run" aria-hidden="true" />
               </button>
               <div className="app-shell__activity-spacer" />
               <div className="app-shell__activity-meta">
-                <span className="app-shell__activity-glyph app-shell__activity-glyph--account" />
+                <span className="app-shell__activity-glyph app-shell__activity-glyph--account" aria-hidden="true" />
               </div>
             </nav>
 
@@ -918,12 +943,12 @@ export function AppShell() {
 
             <aside className="app-shell__agent-panel">
               <div className="app-shell__agent-toolbar">
-                <div className="app-shell__agent-toolbar-group" aria-hidden="true">
-                  <button type="button" className="app-shell__icon-button app-shell__icon-button--small">
-                    <span className="app-shell__icon app-shell__icon--home" />
+                <div className="app-shell__agent-toolbar-group">
+                  <button type="button" className="app-shell__icon-button app-shell__icon-button--small" aria-label="Home">
+                    <span className="app-shell__icon app-shell__icon--home" aria-hidden="true" />
                   </button>
-                  <button type="button" className="app-shell__icon-button app-shell__icon-button--small">
-                    <span className="app-shell__icon app-shell__icon--history" />
+                  <button type="button" className="app-shell__icon-button app-shell__icon-button--small" aria-label="History">
+                    <span className="app-shell__icon app-shell__icon--history" aria-hidden="true" />
                   </button>
                 </div>
                 <div className="app-shell__agent-toolbar-group">
@@ -957,7 +982,8 @@ export function AppShell() {
                     </button>
                   ))}
                 </div>
-                <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything, @ to mention, / for workflows" rows={4} />
+                <label className="app-shell__sr-only" htmlFor="agent-message-input">Agent message</label>
+                <textarea id="agent-message-input" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything, @ to mention, / for workflows" rows={4} />
                 <div className="app-shell__chat-form-footer">
                   <span>{activeProvider?.providerId ?? 'No provider'} · {activeModel} · {selectedContextCount} context</span>
                   <button type="submit" className="app-shell__ghost-button" disabled={isStreaming}>{isStreaming ? 'Thinking...' : 'Send to agent'}</button>

@@ -17,6 +17,7 @@ export interface GuardedWorkspacePath {
 }
 
 const DENIED_PATH_SEGMENTS = new Set(['.git', 'node_modules']);
+const DEFAULT_MAX_READ_BYTES = 512 * 1024;
 
 function isWithinRoot(rootDir: string, candidatePath: string): boolean {
   const relative = path.relative(rootDir, candidatePath);
@@ -25,8 +26,9 @@ function isWithinRoot(rootDir: string, candidatePath: string): boolean {
 
 export class WorkspaceWriter {
   private rootDir: string;
+  private readonly fileLocks = new Map<string, Promise<void>>();
 
-  constructor(rootDir = process.cwd()) {
+  constructor(rootDir = process.cwd(), private readonly maxReadBytes = DEFAULT_MAX_READ_BYTES) {
     this.rootDir = path.resolve(rootDir);
   }
 
@@ -72,6 +74,7 @@ export class WorkspaceWriter {
     await this.assertRealPathWithinWorkspace(guardedPath.absolutePath, false);
 
     try {
+      await this.assertFileSizeWithinLimit(guardedPath.absolutePath);
       return await fs.readFile(guardedPath.absolutePath, 'utf8');
     } catch (err) {
       if (isNodeError(err) && err.code === 'ENOENT') {
@@ -81,25 +84,44 @@ export class WorkspaceWriter {
     }
   }
 
-  async writeFile(filePath: string, content: string): Promise<void> {
+  async writeFile(filePath: string, content: string, expectedContent?: string): Promise<void> {
     const guardedPath = this.resolvePath(filePath);
-    await this.assertRealPathWithinWorkspace(guardedPath.absolutePath, true);
-    await fs.mkdir(path.dirname(guardedPath.absolutePath), { recursive: true });
-    await fs.writeFile(guardedPath.absolutePath, content, 'utf8');
+    await this.withFileLock(guardedPath.absolutePath, async () => {
+      await this.assertRealPathWithinWorkspace(guardedPath.absolutePath, true);
+      if (expectedContent !== undefined) {
+        const currentContent = await this.readFile(guardedPath.relativePath);
+        if ((currentContent ?? '') !== expectedContent) {
+          throw new WorkspacePathError(`Workspace file changed since it was loaded: ${guardedPath.relativePath}`, 'WORKSPACE_WRITE_CONFLICT');
+        }
+      }
+
+      await fs.mkdir(path.dirname(guardedPath.absolutePath), { recursive: true });
+      const tempPath = `${guardedPath.absolutePath}.${process.pid}.${Date.now()}.tmp`;
+      await fs.writeFile(tempPath, content, 'utf8');
+      await fs.rename(tempPath, guardedPath.absolutePath);
+    });
   }
 
-  async deleteFile(filePath: string): Promise<void> {
+  async deleteFile(filePath: string, expectedContent?: string): Promise<void> {
     const guardedPath = this.resolvePath(filePath);
-    await this.assertRealPathWithinWorkspace(guardedPath.absolutePath, false);
-
-    try {
-      await fs.unlink(guardedPath.absolutePath);
-    } catch (err) {
-      if (isNodeError(err) && err.code === 'ENOENT') {
-        return;
+    await this.withFileLock(guardedPath.absolutePath, async () => {
+      await this.assertRealPathWithinWorkspace(guardedPath.absolutePath, false);
+      if (expectedContent !== undefined) {
+        const currentContent = await this.readFile(guardedPath.relativePath);
+        if ((currentContent ?? '') !== expectedContent) {
+          throw new WorkspacePathError(`Workspace file changed since it was loaded: ${guardedPath.relativePath}`, 'WORKSPACE_WRITE_CONFLICT');
+        }
       }
-      throw err;
-    }
+
+      try {
+        await fs.unlink(guardedPath.absolutePath);
+      } catch (err) {
+        if (isNodeError(err) && err.code === 'ENOENT') {
+          return;
+        }
+        throw err;
+      }
+    });
   }
 
   private async assertRealPathWithinWorkspace(
@@ -162,6 +184,33 @@ export class WorkspaceWriter {
     }
 
     return this.findNearestExistingParent(path.dirname(absolutePath));
+  }
+
+  private async assertFileSizeWithinLimit(absolutePath: string): Promise<void> {
+    const stat = await fs.stat(absolutePath);
+    if (stat.isFile() && stat.size > this.maxReadBytes) {
+      throw new WorkspacePathError(`Workspace file is too large to read safely: ${absolutePath}`, 'WORKSPACE_FILE_TOO_LARGE');
+    }
+  }
+
+  private async withFileLock<T>(absolutePath: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.fileLocks.get(absolutePath) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const next = previous.catch(() => undefined).then(() => gate);
+    this.fileLocks.set(absolutePath, next);
+
+    await previous.catch(() => undefined);
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.fileLocks.get(absolutePath) === next) {
+        this.fileLocks.delete(absolutePath);
+      }
+    }
   }
 }
 

@@ -39,35 +39,47 @@ export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async
 
   app.post('/patches/:patchId/approve', async (request, reply) => {
     const { patchId } = request.params as { patchId: string };
-    const patch = await patchService.approve(patchId);
+    try {
+      const patch = await patchService.approve(patchId);
 
-    if (!patch) {
-      return reply.code(404).send({ message: 'Patch not found' });
+      if (!patch) {
+        return reply.code(404).send({ message: 'Patch not found' });
+      }
+
+      return { patch };
+    } catch (err) {
+      return sendPatchError(reply, err);
     }
-
-    return { patch };
   });
 
   app.post('/patches/:patchId/reject', async (request, reply) => {
     const { patchId } = request.params as { patchId: string };
-    const patch = await patchService.reject(patchId);
+    try {
+      const patch = await patchService.reject(patchId);
 
-    if (!patch) {
-      return reply.code(404).send({ message: 'Patch not found' });
+      if (!patch) {
+        return reply.code(404).send({ message: 'Patch not found' });
+      }
+
+      return { patch };
+    } catch (err) {
+      return sendPatchError(reply, err);
     }
-
-    return { patch };
   });
 
   app.post('/patches/:patchId/review', async (request, reply) => {
     const { patchId } = request.params as { patchId: string };
-    const patch = await patchService.review(patchId);
+    try {
+      const patch = await patchService.review(patchId);
 
-    if (!patch) {
-      return reply.code(404).send({ message: 'Patch not found' });
+      if (!patch) {
+        return reply.code(404).send({ message: 'Patch not found' });
+      }
+
+      return { patch };
+    } catch (err) {
+      return sendPatchError(reply, err);
     }
-
-    return { patch };
   });
 
   app.post('/patches/:patchId/apply', async (request, reply) => {

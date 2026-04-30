@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { MODEL_GATEWAY_URL } from '../services/model-gateway';
 
 interface TerminalSessionInfo {
   id: string;
@@ -10,14 +11,12 @@ interface TerminalSessionInfo {
   exitedAt: string | null;
 }
 
-const GATEWAY_URL = 'http://127.0.0.1:3001';
-
 export function useTerminalOutput(): string {
   const [output, setOutput] = useState('');
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_URL}/terminal/output`);
+      const res = await fetch(`${MODEL_GATEWAY_URL}/terminal/output`);
       const body = (await res.json()) as { output: string };
       setOutput(body.output);
     } catch {
@@ -27,6 +26,8 @@ export function useTerminalOutput(): string {
 
   useEffect(() => {
     void refresh();
+    const intervalId = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(intervalId);
   }, [refresh]);
 
   return output;
@@ -64,23 +65,28 @@ export function Terminal() {
   const streamSession = useCallback(
     (sessionId: string) => {
       eventSourceRef.current?.close();
-      const es = new EventSource(`${GATEWAY_URL}/terminal/${sessionId}/stream`);
+      const es = new EventSource(`${MODEL_GATEWAY_URL}/terminal/${sessionId}/stream`);
       eventSourceRef.current = es;
 
-      es.addEventListener('output', (event: MessageEvent) => {
-        const payload = JSON.parse(event.data) as { type: string; text: string };
-        appendLine(payload.text);
-      });
-
-      es.addEventListener('exit', (event: MessageEvent) => {
-        const payload = JSON.parse(event.data) as { type: string; code: number | null };
-        appendLine(`\n[Process exited with code ${payload.code}]\n`);
-        setSession((prev) =>
-          prev ? { ...prev, status: 'exited', exitCode: payload.code } : null,
-        );
-        es.close();
-        eventSourceRef.current = null;
-      });
+      es.onmessage = (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data) as { type: string; text?: string; code?: number | null };
+          if (payload.type === 'output' && typeof payload.text === 'string') {
+            appendLine(payload.text);
+          }
+          if (payload.type === 'exit') {
+            const code = payload.code ?? null;
+            appendLine(`\n[Process exited with code ${code}]\n`);
+            setSession((prev) =>
+              prev ? { ...prev, status: 'exited', exitCode: code } : null,
+            );
+            es.close();
+            eventSourceRef.current = null;
+          }
+        } catch {
+          appendLine('\n[Skipped malformed terminal event]\n');
+        }
+      };
 
       es.onerror = () => {
         es.close();
@@ -99,7 +105,7 @@ export function Terminal() {
     setSession(null);
 
     try {
-      const res = await fetch(`${GATEWAY_URL}/terminal/exec`, {
+      const res = await fetch(`${MODEL_GATEWAY_URL}/terminal/exec`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ command: cmd }),
@@ -127,7 +133,7 @@ export function Terminal() {
     if (!session || session.status !== 'running') return;
 
     try {
-      await fetch(`${GATEWAY_URL}/terminal/${session.id}/kill`, { method: 'POST' });
+      await fetch(`${MODEL_GATEWAY_URL}/terminal/${session.id}/kill`, { method: 'POST' });
       setSession((prev) => (prev ? { ...prev, status: 'killed' } : null));
     } catch {
       // ignore
@@ -138,7 +144,7 @@ export function Terminal() {
     if (!session) return;
 
     try {
-      const res = await fetch(`${GATEWAY_URL}/terminal/${session.id}/restart`, {
+      const res = await fetch(`${MODEL_GATEWAY_URL}/terminal/${session.id}/restart`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ command: session.command }),
@@ -208,7 +214,9 @@ export function Terminal() {
       </pre>
       <div className="app-shell__terminal-input-row">
         <span className="app-shell__terminal-prompt">$</span>
+        <label className="app-shell__sr-only" htmlFor="terminal-command-input">Terminal command</label>
         <input
+          id="terminal-command-input"
           ref={inputRef}
           type="text"
           className="app-shell__terminal-input"

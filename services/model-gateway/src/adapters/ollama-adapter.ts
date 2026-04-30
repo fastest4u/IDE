@@ -9,6 +9,25 @@ import type {
   ProviderInitOptions,
 } from '@ide/protocol';
 
+function createRequestSignal(timeoutMs: number, upstream?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  if (upstream?.aborted) {
+    controller.abort();
+  } else {
+    upstream?.addEventListener('abort', abort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      upstream?.removeEventListener('abort', abort);
+    },
+  };
+}
+
 export class OllamaAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = 'ollama';
   readonly supportedModels: string[];
@@ -36,14 +55,11 @@ export class OllamaAdapter implements ProviderAdapter {
 
   async healthCheck(): Promise<ProviderHealth> {
     const start = Date.now();
+    const requestSignal = createRequestSignal(5000);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-
       const response = await fetch(`${this.baseUrl}/api/tags`, {
-        signal: controller.signal,
+        signal: requestSignal.signal,
       });
-      clearTimeout(timer);
 
       return {
         providerId: this.providerId,
@@ -61,13 +77,14 @@ export class OllamaAdapter implements ProviderAdapter {
         lastCheckedAt: new Date().toISOString(),
         notes: ['Ollama not reachable'],
       };
+    } finally {
+      requestSignal.cleanup();
     }
   }
 
   async generateText(request: ProviderGenerateTextRequest): Promise<ProviderGenerateTextResponse> {
     const start = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const requestSignal = createRequestSignal(this.timeoutMs, request.signal);
 
     try {
       const response = await fetch(`${this.baseUrl}/api/chat`, {
@@ -82,9 +99,8 @@ export class OllamaAdapter implements ProviderAdapter {
             temperature: request.temperature,
           },
         }),
-        signal: controller.signal,
+        signal: requestSignal.signal,
       });
-      clearTimeout(timer);
 
       if (!response.ok) {
         const body = await response.text().catch(() => '');
@@ -110,8 +126,9 @@ export class OllamaAdapter implements ProviderAdapter {
         },
       };
     } catch (err) {
-      clearTimeout(timer);
       throw err;
+    } finally {
+      requestSignal.cleanup();
     }
   }
 
@@ -120,6 +137,7 @@ export class OllamaAdapter implements ProviderAdapter {
     return (async function* () {
       yield { type: 'start', requestId: request.requestId };
 
+      const requestSignal = createRequestSignal(self.timeoutMs, request.signal);
       try {
         const response = await fetch(`${self.baseUrl}/api/chat`, {
           method: 'POST',
@@ -133,6 +151,7 @@ export class OllamaAdapter implements ProviderAdapter {
               temperature: request.temperature,
             },
           }),
+          signal: requestSignal.signal,
         });
 
         if (!response.ok || !response.body) {
@@ -175,6 +194,8 @@ export class OllamaAdapter implements ProviderAdapter {
       } catch (err) {
         yield { type: 'warning', message: `Ollama stream error: ${err instanceof Error ? err.message : String(err)}` };
         yield { type: 'end', reason: 'error' };
+      } finally {
+        requestSignal.cleanup();
       }
     })();
   }

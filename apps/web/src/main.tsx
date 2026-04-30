@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createRouter, createRootRoute, createRoute, createMemoryHistory, Outlet } from '@tanstack/react-router';
+import { RouterProvider, createRouter, createRootRoute, createRoute, createBrowserHistory, Outlet } from '@tanstack/react-router';
 
 import { AppShell } from './app';
 
@@ -27,7 +27,7 @@ const routeTree = rootRoute.addChildren([indexRoute]);
 
 const router = createRouter({
   routeTree,
-  history: createMemoryHistory({ initialEntries: ['/'] }),
+  history: createBrowserHistory(),
 });
 
 declare module '@tanstack/react-router' {

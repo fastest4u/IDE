@@ -9,8 +9,8 @@ export class ResponseValidator implements AIValidator {
       errors.push('Missing requestId');
     }
 
-    if (!response.text && !response.stream) {
-      warnings.push('Response has no text or stream payload');
+    if (!response.text?.trim()) {
+      warnings.push('Response has no text payload');
     }
 
     return {
