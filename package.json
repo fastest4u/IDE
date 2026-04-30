@@ -1,0 +1,54 @@
+{
+  "name": "my-ide",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "(turbo run dev) & (pnpm dev:web) & wait",
+    "dev:test": "node scripts/dev-test.mjs",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "dev:web": "pnpm exec vite apps/web --config apps/web/vite.config.ts --host 0.0.0.0 --port 5173",
+    "dev:model-gateway": "pnpm --dir services/model-gateway dev",
+    "dev:desktop": "turbo run dev --filter=@ide/desktop",
+    "dev:api": "turbo run dev --filter=@ide/api",
+    "dev:worker": "turbo run dev --filter=@ide/worker",
+    "build:web": "pnpm exec vite build apps/web --config apps/web/vite.config.ts",
+    "build:model-gateway": "pnpm --dir services/model-gateway build",
+    "build:desktop": "turbo run build --filter=@ide/desktop",
+    "build:api": "turbo run build --filter=@ide/api",
+    "build:worker": "turbo run build --filter=@ide/worker",
+    "typecheck:apps": "turbo run typecheck --filter=./apps/*",
+    "typecheck:packages": "turbo run typecheck --filter=./packages/*",
+    "typecheck:services": "turbo run typecheck --filter=./services/*",
+    "test:model-gateway": "pnpm --dir services/model-gateway test",
+    "typecheck:model-gateway": "pnpm --dir services/model-gateway typecheck"
+  },
+  "devDependencies": {
+    "@ide/ai-core": "workspace:*",
+    "@ide/protocol": "workspace:*",
+    "@ide/workspace-core": "workspace:*",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.3.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@tanstack/react-query": "^5.0.0",
+    "@tanstack/react-router": "^1.0.0",
+    "@tanstack/react-virtual": "^3.0.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "monaco-editor": "^0.52.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
