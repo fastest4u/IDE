@@ -1,0 +1,45 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - or:
+        - 'file.hasTag("roadmap")'
+        - 'file.inFolder("docs/roadmap")'
+
+formulas:
+  status_label: 'if(status, status, "none")'
+  type_label: 'if(type, type, "roadmap")'
+  updated: 'file.mtime.format("YYYY-MM-DD")'
+
+properties:
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  formula.status_label:
+    displayName: "Status"
+  formula.type_label:
+    displayName: "Type"
+  formula.updated:
+    displayName: "Updated"
+
+views:
+  - type: table
+    name: "Roadmap Docs"
+    order:
+      - file.name
+      - title
+      - formula.type_label
+      - formula.status_label
+      - formula.updated
+      - file.links
+
+  - type: cards
+    name: "Active Planning"
+    filters:
+      and:
+        - 'status != "done"'
+    order:
+      - file.name
+      - title
+      - formula.status_label
+      - formula.updated

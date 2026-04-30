@@ -1,0 +1,46 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - or:
+        - 'file.hasTag("decision")'
+        - 'file.inFolder("docs/decisions")'
+
+formulas:
+  decision_id: 'if(id, id, "")'
+  status_label: 'if(status, status, "none")'
+  updated: 'file.mtime.format("YYYY-MM-DD")'
+
+properties:
+  id:
+    displayName: "ID"
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  formula.decision_id:
+    displayName: "ID"
+  formula.status_label:
+    displayName: "Status"
+  formula.updated:
+    displayName: "Updated"
+
+views:
+  - type: table
+    name: "Decision Log"
+    order:
+      - formula.decision_id
+      - file.name
+      - title
+      - formula.status_label
+      - formula.updated
+      - file.links
+    groupBy:
+      property: formula.status_label
+      direction: ASC
+
+  - type: list
+    name: "Decision List"
+    order:
+      - file.name
+      - title
+      - formula.status_label
