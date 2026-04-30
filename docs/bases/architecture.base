@@ -1,0 +1,56 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - or:
+        - 'file.hasTag("architecture/ai")'
+        - 'file.hasTag("architecture/gap-analysis")'
+        - 'file.inFolder("docs/architecture")'
+
+formulas:
+  status_label: 'if(status, status, "none")'
+  type_label: 'if(type, type, "architecture")'
+  updated: 'file.mtime.format("YYYY-MM-DD")'
+
+properties:
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  formula.status_label:
+    displayName: "Status"
+  formula.type_label:
+    displayName: "Type"
+  formula.updated:
+    displayName: "Updated"
+
+views:
+  - type: table
+    name: "Architecture Notes"
+    order:
+      - file.name
+      - title
+      - formula.type_label
+      - formula.status_label
+      - formula.updated
+      - file.links
+    groupBy:
+      property: formula.status_label
+      direction: ASC
+
+  - type: table
+    name: "AI Architecture"
+    filters:
+      and:
+        - 'file.hasTag("architecture/ai")'
+    order:
+      - file.name
+      - title
+      - formula.status_label
+      - file.backlinks
+
+  - type: list
+    name: "Architecture List"
+    order:
+      - file.name
+      - title
+      - formula.status_label

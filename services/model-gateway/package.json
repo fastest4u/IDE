@@ -1,0 +1,27 @@
+{
+  "name": "@ide/model-gateway",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx src/smoke-test.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@ide/ai-core": "workspace:*",
+    "@ide/protocol": "workspace:*",
+    "@ide/workspace-core": "workspace:*",
+    "fastify": "^5.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.6"
+  }
+}

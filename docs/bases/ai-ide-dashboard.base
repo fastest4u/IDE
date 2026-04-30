@@ -1,0 +1,68 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - or:
+        - 'file.hasTag("project/my-ide")'
+        - 'file.inFolder("docs")'
+
+formulas:
+  type_label: 'if(type, type, "unspecified")'
+  status_label: 'if(status, status, "none")'
+  age_days: '(now() - file.ctime).days.round(0)'
+  updated: 'file.mtime.format("YYYY-MM-DD")'
+
+properties:
+  title:
+    displayName: "Title"
+  type:
+    displayName: "Type"
+  status:
+    displayName: "Status"
+  file.folder:
+    displayName: "Folder"
+  file.mtime:
+    displayName: "Modified"
+  formula.type_label:
+    displayName: "Type"
+  formula.status_label:
+    displayName: "Status"
+  formula.age_days:
+    displayName: "Age Days"
+  formula.updated:
+    displayName: "Updated"
+
+views:
+  - type: table
+    name: "All Project Docs"
+    order:
+      - file.name
+      - title
+      - formula.type_label
+      - formula.status_label
+      - file.folder
+      - formula.updated
+      - formula.age_days
+    groupBy:
+      property: formula.type_label
+      direction: ASC
+
+  - type: cards
+    name: "Core Notes"
+    filters:
+      and:
+        - 'file.hasTag("project/my-ide")'
+    order:
+      - file.name
+      - title
+      - formula.type_label
+      - formula.status_label
+
+  - type: table
+    name: "Recently Updated"
+    limit: 20
+    order:
+      - file.name
+      - title
+      - formula.type_label
+      - file.mtime
+      - file.folder

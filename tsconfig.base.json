@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ide/shared": ["packages/shared/src/index.ts"],
+      "@ide/shared/*": ["packages/shared/src/*"],
+      "@ide/protocol": ["packages/protocol/src/index.ts"],
+      "@ide/protocol/*": ["packages/protocol/src/*"],
+      "@ide/config": ["packages/config/src/index.ts"],
+      "@ide/config/*": ["packages/config/src/*"],
+      "@ide/ui": ["packages/ui/src/index.ts"],
+      "@ide/ui/*": ["packages/ui/src/*"],
+      "@ide/editor-core": ["packages/editor-core/src/index.ts"],
+      "@ide/editor-core/*": ["packages/editor-core/src/*"],
+      "@ide/workspace-core": ["packages/workspace-core/src/index.ts"],
+      "@ide/workspace-core/*": ["packages/workspace-core/src/*"],
+      "@ide/runtime-core": ["packages/runtime-core/src/index.ts"],
+      "@ide/runtime-core/*": ["packages/runtime-core/src/*"],
+      "@ide/sync-core": ["packages/sync-core/src/index.ts"],
+      "@ide/sync-core/*": ["packages/sync-core/src/*"],
+      "@ide/ai-core": ["packages/ai-core/src/index.ts"],
+      "@ide/ai-core/*": ["packages/ai-core/src/*"]
+    }
+  }
+}
