@@ -752,15 +752,16 @@ a:focus-visible {
 
 .app-shell__tree-branch,
 .app-shell__tree-file {
+  width: 100%;
   display: inline-flex;
   align-items: center;
   gap: 0.42rem;
   padding-left: calc(var(--tree-depth, 0) * 0.95rem + 0.45rem);
 }
 
-.app-shell__tree-branch {
+.app-shell__tree-branch,
+.app-shell__tree-file {
   color: var(--text);
-  width: 100%;
   justify-content: flex-start;
   background: transparent;
   border: 0;
@@ -769,7 +770,8 @@ a:focus-visible {
   font: inherit;
 }
 
-.app-shell__tree-branch:hover {
+.app-shell__tree-branch:hover,
+.app-shell__tree-file:hover {
   background: #2a2d31;
 }
 
@@ -834,10 +836,32 @@ a:focus-visible {
   overflow: auto;
 }
 
+.app-shell__editor-tabs::-webkit-scrollbar {
+  height: 0.4rem;
+}
+
+.app-shell__editor-tabs::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 999px;
+}
+
 .app-shell__editor-tab {
   flex: none;
   max-width: 14rem;
   min-width: 7.5rem;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  color: #8f8f8f;
+  background: #2d2d30;
+  border-right: 1px solid #1b1b1c;
+  border-top: 1px solid transparent;
+  font-size: 0.78rem;
+}
+
+.app-shell__editor-tab-link {
+  min-width: 0;
+  flex: 1;
   display: inline-flex;
   align-items: center;
   gap: 0.42rem;
@@ -845,18 +869,34 @@ a:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-decoration: none;
-  color: #8f8f8f;
-  padding: 0 0.85rem;
-  background: #2d2d30;
-  border-right: 1px solid #1b1b1c;
-  border-top: 1px solid transparent;
-  font-size: 0.78rem;
+  color: inherit;
+  padding: 0 0.7rem 0 0.85rem;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
 .app-shell__editor-tab-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.app-shell__editor-tab-close {
+  width: 1.55rem;
+  align-self: stretch;
+  border: 0;
+  border-left: 1px solid #1b1b1c;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-shell__editor-tab-close:hover {
+  background: #3a3a40;
+  color: #ffffff;
 }
 
 .app-shell__editor-tab--active {
@@ -977,7 +1017,9 @@ a:focus-visible {
 }
 
 .app-shell__agent-panel {
-  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-shell__agent-toolbar {
@@ -985,8 +1027,9 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.55rem 0.75rem;
+  padding: 0.45rem 0.65rem;
   border-bottom: 1px solid var(--border);
+  background: #141414;
 }
 
 .app-shell__agent-toolbar-group {
@@ -1002,45 +1045,193 @@ a:focus-visible {
   letter-spacing: 0.04em;
 }
 
-.app-shell__agent-omnibar {
-  margin: 0.75rem 0.75rem 0;
-  min-height: 2.2rem;
+.app-shell__agent-thread-header {
+  min-height: 2.45rem;
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0 0.7rem;
-  border: 1px solid #2a2a2a;
-  border-radius: 0.85rem;
-  background: #202124;
-  color: #d4d4d4;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid #252525;
+  color: #e6e6e6;
+  background: #171717;
 }
 
-.app-shell__agent-omnibar-icon {
-  width: 0.8rem;
-  height: 0.8rem;
-  color: #8a8a8a;
-}
-
-.app-shell__agent-omnibar-icon::before {
-  inset: 0.1rem 0.22rem;
-  border: 1px solid currentColor;
-  border-top-left-radius: 0.25rem;
-  border-top-right-radius: 0.25rem;
-}
-
-.app-shell__agent-omnibar-file {
+.app-shell__agent-thread-header div {
   min-width: 0;
-  flex: 1;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.app-shell__agent-thread-header strong {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.78rem;
+  font-weight: 600;
 }
 
-.app-shell__agent-omnibar-status {
-  color: var(--muted);
-  font-size: 0.68rem;
-  white-space: nowrap;
+.app-shell__agent-thread-kicker {
+  color: #8f8f8f;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.app-shell__agent-live {
+  width: 0.72rem;
+  height: 0.72rem;
+  flex: none;
+  border: 1px solid #4a4a4a;
+  border-radius: 999px;
+  background: #191919;
+}
+
+.app-shell__agent-live--busy {
+  border-color: #7fb3ff;
+  box-shadow: 0 0 0 3px rgba(127, 179, 255, 0.14);
+}
+
+.app-shell__agent-control-field {
+  min-width: 0;
+}
+
+.app-shell__agent-control-field--wide {
+  min-width: 5rem;
+}
+
+.app-shell__agent-composer-card {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0 0.65rem 0.65rem;
+  padding: 0.6rem;
+  border: 1px solid #3a3a3a;
+  border-radius: 0.7rem;
+  background: #1a1a1a;
+  box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.18);
+}
+
+.app-shell__composer-body {
+  position: relative;
+  display: grid;
+}
+
+.app-shell__composer-body textarea {
+  width: 100%;
+  resize: none;
+  min-height: 4.7rem;
+  max-height: 10rem;
+  padding: 0.72rem 3.1rem 0.72rem 0.75rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: #e8e8e8;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.app-shell__composer-body textarea::placeholder {
+  color: rgba(190, 201, 214, 0.56);
+}
+
+.app-shell__composer-body textarea:focus {
+  outline: none;
+}
+
+.app-shell__agent-control-strip-row {
+  display: grid;
+  grid-template-columns: auto minmax(4rem, 0.7fr) minmax(7rem, 1.4fr) minmax(4.5rem, 0.8fr);
+  gap: 0.42rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.app-shell__agent-omnibar-select {
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #b8b8b8;
+  border-radius: 0.35rem;
+  height: 1.7rem;
+  padding: 0 1.2rem 0 0.25rem;
+  font-size: 0.74rem;
+  line-height: 1;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, #777 50%), linear-gradient(135deg, #777 50%, transparent 50%);
+  background-position: calc(100% - 0.58rem) 50%, calc(100% - 0.38rem) 50%;
+  background-size: 0.24rem 0.24rem, 0.24rem 0.24rem;
+  background-repeat: no-repeat;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.app-shell__agent-omnibar-select:hover:not(:disabled) {
+  background-color: #242424;
+  color: #f0f0f0;
+}
+
+.app-shell__agent-omnibar-select:focus {
+  outline: none;
+  background-color: #242424;
+  color: #ffffff;
+}
+
+.app-shell__agent-omnibar-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.app-shell__agent-plus-button {
+  width: 1.55rem;
+  height: 1.55rem;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: #8a8a8a;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-shell__agent-plus-button:hover {
+  background: #242424;
+  color: #e8e8e8;
+}
+
+.app-shell__agent-send-button {
+  position: absolute;
+  right: 0.1rem;
+  bottom: 0.1rem;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.45rem;
+  background: #626262;
+  color: #111111;
+}
+
+.app-shell__agent-send-button:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
+.app-shell__agent-send-button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.app-shell__agent-send-arrow {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-right: 2px solid currentColor;
+  border-top: 2px solid currentColor;
+  transform: rotate(-45deg) translateY(0.05rem);
 }
 
 .app-shell__chat-thread {
@@ -1049,20 +1240,22 @@ a:focus-visible {
   overflow: auto;
   display: grid;
   align-content: start;
-  gap: 0.75rem;
-  padding: 0.9rem 0.9rem 1rem;
+  gap: 1rem;
+  padding: 0.85rem 1.05rem 1.15rem;
+  background: #141414;
 }
 
 .app-shell__chat-bubble {
-  border: 1px solid #272727;
-  border-radius: 0.95rem;
-  padding: 0.8rem 0.85rem;
-  background: #1b1b1c;
+  max-width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0.2rem 0.15rem;
+  background: transparent;
+  color: #b9b9b9;
 }
 
 .app-shell__chat-bubble--user {
-  background: #1f3442;
-  border-color: #234f6a;
+  color: #eeeeee;
 }
 
 .app-shell__chat-bubble-header {
@@ -1070,13 +1263,25 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+
+.app-shell__chat-bubble-header strong {
+  color: #f1f1f1;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.app-shell__chat-bubble-header span {
+  color: #777777;
+  font-size: 0.68rem;
 }
 
 .app-shell__chat-bubble p,
 .app-shell__agent-card p {
   margin: 0;
-  line-height: 1.55;
+  line-height: 1.65;
+  white-space: pre-wrap;
 }
 
 .app-shell__warning-list,
@@ -1107,53 +1312,6 @@ a:focus-visible {
   color: #d4d4d4;
 }
 
-.app-shell__context-menu {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.4rem;
-  padding: 0;
-}
-
-.app-shell__context-menu--inline {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.app-shell__selection-chip {
-  min-height: 1.8rem;
-  border: 1px solid #333333;
-  border-radius: 0.65rem;
-  background: #232325;
-  color: var(--text);
-  padding: 0 0.65rem;
-  text-align: left;
-  font-size: 0.72rem;
-}
-
-.app-shell__selection-chip--active {
-  border-color: #094771;
-  background: #1e3950;
-}
-
-.app-shell__selection-preview {
-  margin: 0 1rem 0.85rem;
-  padding: 0.7rem 0.75rem;
-  border: 1px solid var(--border);
-  background: #1f1f1f;
-}
-
-.app-shell__selection-preview--stacked {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.app-shell__selection-preview strong {
-  margin-bottom: 0.15rem;
-}
-
-.app-shell__selection-preview span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 .app-shell__chat-form {
   display: grid;
