@@ -57,6 +57,15 @@ export class AIRouterEngine {
       candidates = candidates.filter((model) => allowedProviderIds.includes(model.providerId));
     }
 
+    const preferredProviderId = stringMetadata(request, 'preferredProviderId');
+    const preferredModelId = stringMetadata(request, 'preferredModelId');
+    if (isProviderId(preferredProviderId) && preferredModelId) {
+      const exactMatches = candidates.filter((model) => model.providerId === preferredProviderId && model.modelId === preferredModelId);
+      if (exactMatches.length > 0) {
+        candidates = exactMatches;
+      }
+    }
+
     if (request.strategy === 'localOnly') {
       candidates = candidates.filter((m) => m.tier === 'local');
     }
@@ -331,6 +340,7 @@ function isProviderId(value: unknown): value is ProviderId {
     value === 'deepseek' ||
     value === 'ollama' ||
     value === 'vllm' ||
+    value === 'opencode-go' ||
     value === 'custom'
   );
 }

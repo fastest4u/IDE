@@ -7,6 +7,7 @@ import type {
   IDESettings,
   IDESettingsUpdate,
   LocalProviderSettings,
+  LocalProviderId,
   ModelCapabilities,
   WorkspaceSettingsOverride,
 } from '@ide/protocol';
@@ -53,12 +54,24 @@ export class LocalFirstSettingsService {
       workspaceOverrides: update.workspaceOverrides
         ? mergeWorkspaceOverrides(this.settings.workspaceOverrides, update.workspaceOverrides)
         : this.settings.workspaceOverrides,
+      agents: update.agents
+        ? { ...this.settings.agents, ...update.agents }
+        : this.settings.agents,
       updatedAt: new Date().toISOString(),
     };
 
     this.settings = normalizeSettings(next, this.dataDir);
     this.persistSettings();
     return this.getSettings();
+  }
+
+  updateLocalProvider(provider: LocalProviderSettings): IDESettings {
+    const existingProviders = this.settings.localProviders;
+    const nextProviders = existingProviders.some((item) => item.providerId === provider.providerId)
+      ? existingProviders.map((item) => (item.providerId === provider.providerId ? provider : item))
+      : [...existingProviders, provider];
+
+    return this.updateSettings({ localProviders: nextProviders });
   }
 
   restoreSettings(settings: IDESettings): IDESettings {
@@ -70,18 +83,7 @@ export class LocalFirstSettingsService {
   getLocalProviderConfigs(): ProviderConnectionConfig[] {
     return this.settings.localProviders
       .filter((provider) => provider.enabled && provider.models.length > 0)
-      .map((provider) => ({
-        providerId: provider.providerId,
-        baseUrl: provider.baseUrl,
-        timeoutMs: provider.timeoutMs,
-        models: provider.models.map((modelId) => ({
-          modelId,
-          displayName: `${provider.providerId}/${modelId}`,
-          tier: 'local',
-          capabilities: LOCAL_CODE_CAPABILITIES,
-          maxContextTokens: provider.providerId === 'ollama' ? 32768 : 128000,
-        })),
-      }));
+      .map(localProviderToConfig);
   }
 
   getLocalProviderConfig(providerId: LocalProviderSettings['providerId']): ProviderConnectionConfig | null {
@@ -179,20 +181,33 @@ function defaultSettings(dataDir: string): IDESettings {
       privacyMode: 'standard',
       defaultStrategy: 'primary',
       allowCloudProviders: true,
+      permissions: {
+        read: 'allow',
+        glob: 'allow',
+        grep: 'allow',
+        list: 'allow',
+        lsp: 'allow',
+        skill: 'allow',
+        question: 'allow',
+        todoread: 'allow',
+        edit: 'ask',
+        write: 'ask',
+        applyPatch: 'ask',
+        webfetch: 'ask',
+        websearch: 'ask',
+        todowrite: 'ask',
+        bash: { '*': 'ask' },
+        task: { '*': 'ask' },
+        externalDirectory: { '*': 'ask' },
+      },
     },
     localProviders: normalizeLocalProviders([
       {
-        providerId: 'ollama',
-        enabled: true,
-        baseUrl: 'http://127.0.0.1:11434',
-        models: ['llama3.2', 'qwen2.5-coder:7b'],
-        timeoutMs: 60000,
-      },
-      {
-        providerId: 'vllm',
+        providerId: 'opencode-go',
         enabled: false,
-        baseUrl: 'http://127.0.0.1:8000',
-        models: ['local-model'],
+        baseUrl: 'https://opencode.ai/zen/go',
+        apiKeyEnv: 'OPENCODE_API_KEY',
+        models: ['kimi-k2.6', 'glm-5.1', 'deepseek-v4-pro'],
         timeoutMs: 60000,
       },
     ]),
@@ -219,8 +234,9 @@ function normalizeSettings(input: Partial<IDESettings>, dataDir: string): IDESet
       ...fallback.policy,
       ...input.policy,
     },
-    localProviders: normalizeLocalProviders(input.localProviders ?? fallback.localProviders),
+    localProviders: normalizeLocalProviders(mergeProviderDefaults(input.localProviders, fallback.localProviders)),
     workspaceOverrides: normalizeWorkspaceOverrides(input.workspaceOverrides ?? fallback.workspaceOverrides),
+    agents: { ...fallback.agents, ...input.agents },
     memory: {
       ...fallback.memory,
       ...input.memory,
@@ -238,44 +254,87 @@ function localProviderToConfig(provider: LocalProviderSettings): ProviderConnect
   return {
     providerId: provider.providerId,
     baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    apiKeyEnv: provider.apiKeyEnv,
     timeoutMs: provider.timeoutMs,
     models: provider.models.map((modelId) => ({
       modelId,
       displayName: `${provider.providerId}/${modelId}`,
       tier: 'local',
       capabilities: LOCAL_CODE_CAPABILITIES,
-      maxContextTokens: provider.providerId === 'ollama' ? 32768 : 128000,
+      maxContextTokens: 128000,
     })),
   };
 }
 
 function normalizeLocalProviders(providers: LocalProviderSettings[]): LocalProviderSettings[] {
   return providers
-    .filter((provider) => provider.providerId === 'ollama' || provider.providerId === 'vllm')
+    .filter((provider) => isConfigurableProviderId(provider.providerId))
     .map((provider) => ({
       providerId: provider.providerId,
       enabled: Boolean(provider.enabled),
       baseUrl: normalizeLocalProviderBaseUrl(provider.providerId, provider.baseUrl),
+      apiKey: normalizeApiKey(provider.apiKey),
+      apiKeyEnv: normalizeApiKeyEnv(provider.apiKeyEnv),
       models: provider.models.map((model) => model.trim()).filter(Boolean),
       timeoutMs: provider.timeoutMs > 0 ? provider.timeoutMs : 60000,
     }));
+}
+
+function mergeProviderDefaults(
+  providers: LocalProviderSettings[] | undefined,
+  fallbackProviders: LocalProviderSettings[],
+): LocalProviderSettings[] {
+  if (!providers) {
+    return fallbackProviders;
+  }
+
+  const configuredIds = new Set(providers.map((provider) => provider.providerId));
+  return [
+    ...providers,
+    ...fallbackProviders.filter((provider) => !configuredIds.has(provider.providerId)),
+  ];
 }
 
 function normalizeLocalProviderBaseUrl(
   providerId: LocalProviderSettings['providerId'],
   value: string | undefined,
 ): string {
-  const fallback = providerId === 'ollama' ? 'http://127.0.0.1:11434' : 'http://127.0.0.1:8000';
+  const fallback = defaultProviderBaseUrl(providerId);
   const raw = value?.trim() || fallback;
 
   try {
     const url = new URL(raw);
     const isHttp = url.protocol === 'http:' || url.protocol === 'https:';
     const isLoopback = url.hostname === 'localhost' || url.hostname === '::1' || url.hostname.startsWith('127.');
-    return isHttp && isLoopback ? url.toString().replace(/\/+$/, '') : fallback;
+    const canUseRemote = providerId === 'opencode-go' || providerId === 'custom';
+    return isHttp && (isLoopback || canUseRemote) ? url.toString().replace(/\/+$/, '') : fallback;
   } catch {
     return fallback;
   }
+}
+
+function defaultProviderBaseUrl(providerId: LocalProviderSettings['providerId']): string {
+  switch (providerId) {
+    case 'opencode-go':
+      return 'https://opencode.ai/zen/go';
+    case 'custom':
+      return 'http://127.0.0.1:8000';
+  }
+}
+
+function normalizeApiKeyEnv(value: string | undefined): string | undefined {
+  const next = value?.trim();
+  return next || undefined;
+}
+
+function normalizeApiKey(value: string | undefined): string | undefined {
+  const next = value?.trim();
+  return next || undefined;
+}
+
+function isConfigurableProviderId(value: unknown): value is LocalProviderId {
+  return value === 'opencode-go' || value === 'custom';
 }
 
 function mergeWorkspaceOverrides(
@@ -314,7 +373,7 @@ function normalizeWorkspaceOverride(input: WorkspaceSettingsOverride): Workspace
   return {
     workspaceId: input.workspaceId,
     policy: input.policy ? { ...input.policy } : undefined,
-    localProviderIds: input.localProviderIds?.filter((id, index, all) => (id === 'ollama' || id === 'vllm') && all.indexOf(id) === index),
+    localProviderIds: input.localProviderIds?.filter((id, index, all) => isConfigurableProviderId(id) && all.indexOf(id) === index),
     updatedAt: input.updatedAt || new Date().toISOString(),
   };
 }

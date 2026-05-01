@@ -274,6 +274,13 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           }
         }
 
+        const trailing = buffer.trim();
+        if (trailing) {
+          for (const event of openAIStreamPayloadToEvents(trailing, toolCallBuffers)) {
+            yield event;
+          }
+        }
+
         for (const event of flushOpenAIStreamToolCalls(toolCallBuffers, emittedToolCallIds)) {
           yield event;
         }
@@ -300,6 +307,39 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
   supportsStreaming(): boolean {
     return true;
+  }
+}
+
+function* openAIStreamPayloadToEvents(
+  payload: string,
+  toolCallBuffers: Map<number, OpenAIStreamToolCallBuffer>,
+): Iterable<AIStreamEvent> {
+  const jsonText = payload.startsWith('data: ') ? payload.slice(6).trim() : payload;
+  if (!jsonText || jsonText === '[DONE]') return;
+
+  try {
+    const data = JSON.parse(jsonText) as {
+      choices?: Array<{
+        delta?: { content?: string; tool_calls?: OpenAIStreamToolCallDelta[] };
+        message?: { content?: string | null; tool_calls?: OpenAIChatToolCall[] };
+      }>;
+    };
+    const choice = data.choices?.[0];
+    const content = choice?.delta?.content ?? choice?.message?.content;
+    if (content) {
+      yield { type: 'delta', text: content };
+    }
+    for (const toolCallDelta of choice?.delta?.tool_calls ?? []) {
+      appendOpenAIStreamToolCall(toolCallBuffers, toolCallDelta);
+    }
+    for (const toolCall of choice?.message?.tool_calls ?? []) {
+      const converted = openAIToolCallToProtocol(toolCall);
+      if (converted) {
+        yield { type: 'tool_call', toolCall: converted };
+      }
+    }
+  } catch {
+    return;
   }
 }
 

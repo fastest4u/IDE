@@ -3,6 +3,8 @@ import type {
   AIResponse,
   AIStreamEvent,
   AIToolCall,
+  AgentConfig,
+  AgentPermissionSettings,
   CollaborationRequest,
   CollaborationResponse,
   CollaborationRoleOutput,
@@ -22,17 +24,26 @@ import {
   AI_PATCH_TOOL_SPEC,
 } from '@ide/protocol';
 
-import { ContextBuilderService, RoleOrchestrationService } from '@ide/ai-core';
+import { CompactionService, ContextBuilderService, RoleOrchestrationService } from '@ide/ai-core';
 
 import { AIRouterEngine } from './router/ai-router';
+import { createStableCacheKey } from './cache-key';
+import { CacheOrchestrator } from './cache-orchestrator';
 import { ResponseValidator } from './safety/response-validator';
 import { UsageLog } from './telemetry/usage-log';
 import { InMemorySessionStore } from './memory/session-store';
 import { WorkspaceContextService } from './memory/workspace-context';
 import type { PatchService } from './patches';
 import type { LocalFirstSettingsService } from './settings';
+import { PermissionService } from './permissions';
+import { DefaultPluginHookRegistry } from './plugin-hooks';
 
 export class AIController {
+  private readonly permissionService: PermissionService;
+  private readonly compactionService: CompactionService;
+  private readonly pluginRegistry: DefaultPluginHookRegistry;
+  private readonly cacheOrchestrator = new CacheOrchestrator();
+
   constructor(
     private readonly router: AIRouterEngine,
     private readonly contextBuilder: ContextBuilderService = new ContextBuilderService(),
@@ -42,7 +53,37 @@ export class AIController {
     private readonly patchService?: PatchService,
     private readonly roleOrchestrator: RoleOrchestrationService = new RoleOrchestrationService(),
     private readonly settingsService?: LocalFirstSettingsService,
-  ) {}
+  ) {
+    // Initialize new services from OpenCode patterns
+    const permissions = this.settingsService?.getEffectiveSettings().policy?.permissions;
+    this.permissionService = new PermissionService(permissions);
+    this.compactionService = new CompactionService();
+    this.pluginRegistry = new DefaultPluginHookRegistry();
+  }
+
+  /**
+   * Register a plugin hook (OpenCode-style)
+   */
+  registerPluginHook(hook: import('@ide/protocol').GatewayPluginHook): void {
+    this.pluginRegistry.register(hook);
+  }
+
+  /**
+   * Check permission for a tool
+   */
+  checkPermission(tool: keyof AgentPermissionSettings, args?: string): { allowed: boolean; requiresAsk: boolean; denied: boolean } {
+    if (args && (tool === 'bash' || tool === 'task' || tool === 'externalDirectory')) {
+      return this.permissionService.checkToolWithArgs(tool, args);
+    }
+    return this.permissionService.checkTool(tool);
+  }
+
+  /**
+   * Update compaction settings at runtime
+   */
+  updateCompactionOptions(options: import('@ide/ai-core').CompactionOptions): void {
+    this.compactionService.updateOptions(options);
+  }
 
   async handleGenerate(request: AIRequest): Promise<AIResponse> {
     const enrichedRequest = this.applyLocalPolicy(
@@ -55,7 +96,7 @@ export class AIController {
       enrichedRequest.prompt,
     );
 
-    const packet = await this.contextBuilder.buildPacket(enrichedRequest, taskState);
+    const packet = await this.getOrBuildContextPacket(enrichedRequest, taskState);
     const augmentedPrompt = this.contextBuilder.buildPromptWithContext(
       enrichedRequest.prompt,
       packet,
@@ -75,10 +116,31 @@ export class AIController {
       },
     };
 
-    const decision = await this.router.route(augmentedRequest);
-    const response = await this.router.execute(augmentedRequest, decision);
+    // Apply plugin hooks (OpenCode-style) before routing
+    const hookedRequest = await this.pluginRegistry.beforeRequest(augmentedRequest);
+
+    // Optional: trigger context compaction if task state is too large
+    const compactedState = this.compactionService.compactTaskState(taskState);
+    if (compactedState.summary) {
+      await this.sessionStore.updateHandoffSummary(
+        request.context.sessionId,
+        compactedState.summary,
+      );
+      this.cacheOrchestrator.invalidate({
+        type: 'session.memory.changed',
+        namespace: 'context-packet',
+        scope: 'session',
+        scopeId: request.context.sessionId,
+      });
+    }
+
+    const decision = await this.router.route(hookedRequest);
+    const response = await this.router.execute(hookedRequest, decision);
     await this.validator.validateResponse(response);
-    const responseWithPatches = await this.recordPatchToolCallsFromResponse(response, augmentedRequest);
+    const responseWithPatches = await this.recordPatchToolCallsFromResponse(response, hookedRequest);
+
+    // Apply plugin hooks after response
+    const hookedResponse = await this.pluginRegistry.afterResponse(responseWithPatches);
 
     const usage: ProviderUsageOutcome = {
       requestId: request.id,
@@ -95,15 +157,22 @@ export class AIController {
     await this.sessionStore.recordProviderUsage(request.context.sessionId, usage);
 
     const outcome = this.contextBuilder.extractOutcome(responseWithPatches, request);
+    const updatedHandoffSummary = this.contextBuilder.buildHandoffSummary(taskState);
     await this.sessionStore.updateHandoffSummary(
       request.context.sessionId,
-      this.contextBuilder.buildHandoffSummary(taskState),
+      updatedHandoffSummary,
     );
+    this.cacheOrchestrator.invalidate({
+      type: 'session.memory.changed',
+      namespace: 'context-packet',
+      scope: 'session',
+      scopeId: request.context.sessionId,
+    });
 
     return {
-      ...responseWithPatches,
+      ...hookedResponse,
       metadata: {
-        ...responseWithPatches.metadata,
+        ...hookedResponse.metadata,
         sessionId: request.context.sessionId,
         taskGoal: taskState.goal,
         handoffSummary: taskState.lastHandoffSummary,
@@ -122,7 +191,7 @@ export class AIController {
       policyRequest.prompt,
     );
 
-    const packet = await this.contextBuilder.buildPacket(policyRequest, taskState);
+    const packet = await this.getOrBuildContextPacket(policyRequest, taskState);
     const augmentedPrompt = this.contextBuilder.buildPromptWithContext(
       policyRequest.prompt,
       packet,
@@ -130,7 +199,10 @@ export class AIController {
 
     const augmentedRequest: AIRequest = { ...policyRequest, prompt: augmentedPrompt };
 
-    const decision = await this.router.route(augmentedRequest);
+    // Apply plugin hooks (OpenCode-style) before routing
+    const hookedRequest = await this.pluginRegistry.beforeRequest(augmentedRequest);
+
+    const decision = await this.router.route(hookedRequest);
     const adapter = this.router.getAdapter(decision.chosen.providerId);
     if (!adapter) {
       throw new Error(`No adapter for provider ${decision.chosen.providerId}`);
@@ -147,17 +219,17 @@ export class AIController {
     await this.sessionStore.recordProviderUsage(policyRequest.context.sessionId, usage);
 
     const stream = await adapter.streamText({
-      requestId: policyRequest.id,
+      requestId: hookedRequest.id,
       modelId: decision.chosen.modelId,
-      prompt: augmentedPrompt,
-      context: policyRequest.context,
-      maxTokens: policyRequest.maxTokens,
-      temperature: policyRequest.temperature,
-      tools: policyRequest.tools,
+      prompt: hookedRequest.prompt,
+      context: hookedRequest.context,
+      maxTokens: hookedRequest.maxTokens,
+      temperature: hookedRequest.temperature,
+      tools: hookedRequest.tools,
       stream: true,
       signal: options.signal,
     });
-    return this.recordPatchToolCalls(stream, policyRequest);
+    return this.recordPatchToolCalls(stream, hookedRequest);
   }
 
   async handleCollaborate(request: CollaborationRequest): Promise<CollaborationResponse> {
@@ -189,7 +261,7 @@ export class AIController {
       collaboration.context.sessionId,
       collaboration.goal,
     );
-    const packet = await this.contextBuilder.buildPacket(enrichedRequest, taskState);
+    const packet = await this.getOrBuildContextPacket(enrichedRequest, taskState);
     const rolePlan = this.roleOrchestrator.buildRolePlan(collaboration);
     const outputs: CollaborationRoleOutput[] = [];
     const warnings: string[] = [];
@@ -253,10 +325,17 @@ export class AIController {
       throw new Error('Collaboration produced no role outputs');
     }
 
+    const handoff = this.buildCollaborationHandoff(collaboration, outputs);
     await this.sessionStore.updateHandoffSummary(
       collaboration.context.sessionId,
-      this.buildCollaborationHandoff(collaboration, outputs),
+      handoff,
     );
+    this.cacheOrchestrator.invalidate({
+      type: 'session.memory.changed',
+      namespace: 'context-packet',
+      scope: 'session',
+      scopeId: collaboration.context.sessionId,
+    });
 
     return {
       id: collaboration.id,
@@ -320,16 +399,29 @@ export class AIController {
     return this.sessionStore.listSessions();
   }
 
-  addDecision(sessionId: string, decision: string): Promise<void> {
-    return this.sessionStore.addDecision(sessionId, decision);
+  async addDecision(sessionId: string, decision: string): Promise<void> {
+    await this.sessionStore.addDecision(sessionId, decision);
+    this.cacheOrchestrator.invalidate({
+      type: 'session.memory.changed',
+      namespace: 'context-packet',
+      scope: 'session',
+      scopeId: sessionId,
+    });
   }
 
-  addConstraint(sessionId: string, constraint: string): Promise<void> {
-    return this.sessionStore.addConstraint(sessionId, constraint);
+  async addConstraint(sessionId: string, constraint: string): Promise<void> {
+    await this.sessionStore.addConstraint(sessionId, constraint);
+    this.cacheOrchestrator.invalidate({
+      type: 'session.memory.changed',
+      namespace: 'context-packet',
+      scope: 'session',
+      scopeId: sessionId,
+    });
   }
 
   async setWorkspaceRoot(rootDir: string): Promise<void> {
     await this.workspace.setWorkspaceRoot(rootDir);
+    this.cacheOrchestrator.invalidate({ type: 'workspace.root.changed', namespace: 'context-packet', scope: 'workspace' });
   }
 
   getWorkspaceRoot(): string | null {
@@ -357,7 +449,14 @@ export class AIController {
     content: string;
     expectedContent?: string;
   }): Promise<{ filePath: string; bytes: number; updatedAt: string }> {
-    return this.workspace.writeFileContent(input);
+    const result = await this.workspace.writeFileContent(input);
+    this.cacheOrchestrator.invalidate({
+      type: 'workspace.file.changed',
+      namespace: 'context-packet',
+      scope: 'workspace',
+      scopeId: result.filePath,
+    });
+    return result;
   }
 
   isWorkspaceReady(): boolean {
@@ -562,6 +661,46 @@ export class AIController {
     };
 
     await this.sessionStore.addMemory(collaboration.context.sessionId, record);
+    this.cacheOrchestrator.invalidate({
+      type: 'session.memory.changed',
+      namespace: 'context-packet',
+      scope: 'session',
+      scopeId: collaboration.context.sessionId,
+    });
+  }
+
+  private async getOrBuildContextPacket(
+    request: AIRequest,
+    taskState: TaskState,
+  ): Promise<Awaited<ReturnType<ContextBuilderService['buildPacket']>>> {
+    const packet = await this.cacheOrchestrator.getOrBuild({
+      namespace: 'context-packet',
+      version: 'v1',
+      scope: 'session',
+      scopeId: request.context.sessionId,
+      ttlMs: 60_000,
+      parts: [
+        request.context.workspaceId,
+        request.context.sessionId,
+        request.kind,
+        request.prompt,
+        request.context.activeFilePath ?? '',
+        request.context.selectedText ?? '',
+        request.context.gitDiff ?? '',
+        request.context.terminalOutput ?? '',
+        request.context.repoSummary ?? '',
+        request.context.openFiles ?? [],
+        request.context.metadata ?? {},
+        taskState.goal,
+        taskState.decisions,
+        taskState.constraints,
+        taskState.lastHandoffSummary,
+        taskState.memory.map((item) => ({ id: item.id, summary: item.summary, kind: item.kind })),
+        taskState.patches.map((item) => ({ id: item.patchId, status: item.status, summary: item.summary })),
+      ],
+    }, async () => this.contextBuilder.buildPacket(request, taskState));
+
+    return packet as Awaited<ReturnType<ContextBuilderService['buildPacket']>>;
   }
 
   private buildCollaborationHandoff(
@@ -633,6 +772,7 @@ function isProviderId(value: unknown): value is ProviderId {
     value === 'deepseek' ||
     value === 'ollama' ||
     value === 'vllm' ||
+    value === 'opencode-go' ||
     value === 'custom'
   );
 }

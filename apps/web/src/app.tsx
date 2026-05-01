@@ -3,22 +3,27 @@ import Editor, { loader } from '@monaco-editor/react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AI_PATCH_TOOL_SPEC } from '@ide/protocol';
-import type { AIDiagnosticSummary } from '@ide/protocol';
+import type { AIDiagnosticSummary, IDESettings, LocalProviderSettings, ProviderId, ProviderRuntimeStatus } from '@ide/protocol';
 
 import './styles.css';
 
 import {
   indexWorkspace,
   listPatches,
-  streamAIResponse,
+  streamAIResponseWS,
   getWorkspaceFile,
   getWorkspaceSummary,
+  getSettings,
   listWorkspaceFiles,
   saveWorkspaceFile,
   getProviderRuntimeStatus,
+  testProviderConnection,
+  updateLocalProvider,
+  updateSettings,
 } from './services/model-gateway';
 import { Terminal, useTerminalOutput } from './components/terminal';
 import { WorkspaceSelector } from './components/workspace-selector';
+import { ProviderSettingsPanel, providerTitle } from './components/ProviderSettings';
 import {
   getMonacoCompilerOptions,
   getMonacoLanguage,
@@ -37,7 +42,6 @@ interface ChatMessage {
 }
 
 type WorkspacePresence = 'ready' | 'missing' | 'error';
-
 interface WorkspaceViewState {
   name: string;
   summary: string;
@@ -164,6 +168,29 @@ function useProviderRuntimeStatusQuery() {
     queryFn: getProviderRuntimeStatus,
     staleTime: 10_000,
     retry: false,
+  });
+}
+
+function useSettingsQuery(enabled: boolean) {
+  return useQuery({
+    queryKey: ['settings', 'local'],
+    queryFn: getSettings,
+    enabled,
+    staleTime: 10_000,
+    retry: false,
+  });
+}
+
+function useUpdateSettingsMutation() {
+  return useMutation({
+    mutationFn: updateSettings,
+  });
+}
+
+function useUpdateLocalProviderMutation() {
+  return useMutation({
+    mutationFn: ({ providerId, provider }: { providerId: ProviderId; provider: LocalProviderSettings }) =>
+      updateLocalProvider(providerId, provider as unknown as Record<string, unknown>),
   });
 }
 
@@ -456,18 +483,25 @@ export function AppShell() {
   const workspaceQuery = useWorkspaceQuery(hasExplicitWorkspaceSelection);
   const patchesQuery = usePatchesQuery();
   const providerStatusQuery = useProviderRuntimeStatusQuery();
+  const settingsQuery = useSettingsQuery(hasExplicitWorkspaceSelection);
   const queryClient = useQueryClient();
   const saveFileMutation = useSaveWorkspaceFileMutation();
+  const updateSettingsMutation = useUpdateSettingsMutation();
+  const updateLocalProviderMutation = useUpdateLocalProviderMutation();
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{ id: 'seed-assistant', role: 'assistant', content: 'Tell me what to inspect, refactor, or patch in this workspace.' }]);
   const [editorSelection, setEditorSelection] = useState<{ text: string; filePath: string } | null>(null);
   const [editorState, setEditorState] = useState<EditorState>({ filePath: '', draft: '', saved: '' });
   const [expandedDirectoryIds, setExpandedDirectoryIds] = useState<Set<string>>(() => new Set([EXPLORER_ROOT_ID]));
+  const [selectedProviderId, setSelectedProviderId] = useState<ProviderId | ''>('');
   const [selectedModelId, setSelectedModelId] = useState('');
   const [selectedMode, setSelectedMode] = useState<'Build' | 'Inspect' | 'Patch'>('Inspect');
   const [selectedReasoningLevel, setSelectedReasoningLevel] = useState<'Default' | 'Low' | 'Medium' | 'High' | 'Max'>('High');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [testingProviderId, setTestingProviderId] = useState<ProviderId | null>(null);
   const [openTabsState, setOpenTabsState] = useState<OpenTab[]>([]);
   const workspaceSyncRef = useRef<string | null>(null);
 
@@ -604,7 +638,8 @@ export function AppShell() {
       return nextTabs;
     });
   }, [activeFile, navigate, queryClient, workspaceRoot]);
-  const activeProvider = providerStatuses.find((provider) => provider.enabled && provider.healthy) ?? providerStatuses.find((provider) => provider.enabled);
+  const readyProviders = providerStatuses.filter((provider) => provider.enabled && provider.healthy && provider.models.length > 0);
+  const activeProvider = readyProviders.find((provider) => provider.providerId === selectedProviderId) ?? readyProviders[0];
   const availableModels = activeProvider?.models ?? [];
   const activeModel = availableModels.find((model) => model.modelId === selectedModelId) ?? availableModels[0];
   const activeModelId = activeModel?.modelId ?? 'No model';
@@ -612,10 +647,22 @@ export function AppShell() {
   const monacoEditorPath = hasWorkspace && activeFile ? getMonacoModelPath(workspaceRoot, activeFile) : 'file:///untitled';
 
   useEffect(() => {
-    if (!selectedModelId && availableModels.length > 0) {
+    if (!activeProvider) {
+      if (selectedProviderId || selectedModelId) {
+        setSelectedProviderId('');
+        setSelectedModelId('');
+      }
+      return;
+    }
+
+    if (selectedProviderId !== activeProvider.providerId) {
+      setSelectedProviderId(activeProvider.providerId);
+    }
+
+    if (!selectedModelId || !availableModels.some((model) => model.modelId === selectedModelId)) {
       setSelectedModelId(availableModels[0].modelId);
     }
-  }, [availableModels, selectedModelId]);
+  }, [activeProvider, availableModels, selectedModelId, selectedProviderId]);
 
   useEffect(() => {
     if (!hasWorkspace || !workspaceRoot) {
@@ -665,6 +712,32 @@ export function AppShell() {
     await queryClient.invalidateQueries({ queryKey: ['workspace-file'] });
   };
 
+  const handleSaveProvider = async (provider: LocalProviderSettings) => {
+    setSettingsNotice(null);
+    try {
+      await updateLocalProviderMutation.mutateAsync({ providerId: provider.providerId, provider });
+      setSettingsNotice(`Saved ${providerTitle(provider.providerId)}.`);
+      await queryClient.invalidateQueries({ queryKey: ['settings'] });
+      await queryClient.invalidateQueries({ queryKey: ['settings', 'provider-status'] });
+    } catch (err) {
+      setSettingsNotice(err instanceof Error ? err.message : 'Provider settings save failed.');
+    }
+  };
+
+  const handleTestProvider = async (providerId: ProviderId) => {
+    setSettingsNotice(null);
+    setTestingProviderId(providerId);
+    try {
+      const result = await testProviderConnection(providerId);
+      setSettingsNotice(`${providerTitle(providerId)} is ${result.ok ? 'ready' : 'not ready'}.`);
+      await queryClient.invalidateQueries({ queryKey: ['settings', 'provider-status'] });
+    } catch (err) {
+      setSettingsNotice(err instanceof Error ? err.message : 'Provider test failed.');
+    } finally {
+      setTestingProviderId(null);
+    }
+  };
+
   const handleSaveFile = async () => {
     if (!activeFile || !isDirty) return;
     const filePath = activeFile;
@@ -708,7 +781,7 @@ export function AppShell() {
     setMessages((current) => [...current, { id: streamId, role: 'assistant', content: '', warnings: [], toolCalls: [] }]);
 
     try {
-      const collectedText = await streamAIResponse(prompt, {
+      const collectedText = await streamAIResponseWS(prompt, {
         kind: 'edit',
         preferredCapabilities: ['codeEditing', 'tools'],
         context: {
@@ -721,6 +794,11 @@ export function AppShell() {
           diagnostics,
           terminalOutput,
           repoSummary: workspaceQuery.data?.summary,
+          metadata: activeProvider && activeModel ? {
+            preferredProviderId: activeProvider.providerId,
+            preferredModelId: activeModel.modelId,
+            allowedProviderIds: [activeProvider.providerId],
+          } : undefined,
         },
         tools: [AI_PATCH_TOOL_SPEC],
       }, (event) => {
@@ -797,7 +875,12 @@ export function AppShell() {
               <div className="app-shell__activity-logo">
                 <span className="app-shell__activity-mark" />
               </div>
-              <button type="button" className="app-shell__activity-item app-shell__activity-item--active" title="Explorer" aria-label="Explorer">
+              <button
+                type="button"
+                className="app-shell__activity-item app-shell__activity-item--active"
+                title="Explorer"
+                aria-label="Explorer"
+              >
                 <span className="app-shell__activity-glyph app-shell__activity-glyph--files" aria-hidden="true" />
               </button>
               <button type="button" className="app-shell__activity-item" title="Search" aria-label="Search">
@@ -806,11 +889,17 @@ export function AppShell() {
               <button type="button" className="app-shell__activity-item" title="Agent" aria-label="Agent">
                 <span className="app-shell__activity-glyph app-shell__activity-glyph--branch" aria-hidden="true" />
               </button>
-              <button type="button" className="app-shell__activity-item" title="Settings" aria-label="Settings">
-                <span className="app-shell__activity-glyph app-shell__activity-glyph--run" aria-hidden="true" />
-              </button>
               <div className="app-shell__activity-spacer" />
-              <div className="app-shell__activity-meta">
+              <button
+                type="button"
+                className={isSettingsOpen ? 'app-shell__activity-item app-shell__activity-item--active' : 'app-shell__activity-item'}
+                title="Settings"
+                aria-label="Settings"
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                <span className="app-shell__activity-glyph app-shell__activity-glyph--settings" aria-hidden="true" />
+              </button>
+              <div className="app-shell__activity-meta" title="Profile" aria-label="Profile">
                 <span className="app-shell__activity-glyph app-shell__activity-glyph--account" aria-hidden="true" />
               </div>
             </nav>
@@ -1022,18 +1111,22 @@ export function AppShell() {
                     <select
                       id="model-select"
                       className="app-shell__agent-omnibar-select"
-                      value={activeModelId === 'No model' ? '' : activeModelId}
-                      onChange={(event) => setSelectedModelId(event.target.value)}
-                      disabled={availableModels.length === 0}
+                      value={activeProvider && activeModel ? `${activeProvider.providerId}/${activeModel.modelId}` : ''}
+                      onChange={(event) => {
+                        const [providerId, ...modelSegments] = event.target.value.split('/');
+                        setSelectedProviderId(providerId as ProviderId);
+                        setSelectedModelId(modelSegments.join('/'));
+                      }}
+                      disabled={readyProviders.length === 0}
                     >
-                      {availableModels.length === 0 ? (
+                      {readyProviders.length === 0 ? (
                         <option value="">No model</option>
                       ) : (
-                        availableModels.map((model) => (
-                          <option key={model.modelId} value={model.modelId}>
-                            {model.modelId}
+                        readyProviders.flatMap((provider) => provider.models.map((model) => (
+                          <option key={`${provider.providerId}/${model.modelId}`} value={`${provider.providerId}/${model.modelId}`}>
+                            {providerTitle(provider.providerId)} · {model.modelId}
                           </option>
-                        ))
+                        )))
                       )}
                     </select>
                   </div>
@@ -1056,6 +1149,39 @@ export function AppShell() {
               </form>
             </aside>
           </main>
+
+          {isSettingsOpen && (
+            <div className="app-shell__modal-backdrop" role="presentation" onMouseDown={() => setIsSettingsOpen(false)}>
+              <section
+                className="app-shell__settings-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="settings-modal-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <header className="app-shell__settings-modal-header">
+                  <div>
+                    <h2 id="settings-modal-title">Settings</h2>
+                    <span>Providers</span>
+                  </div>
+                  <button type="button" className="app-shell__icon-button" aria-label="Close settings" onClick={() => setIsSettingsOpen(false)}>
+                    ×
+                  </button>
+                </header>
+                {settingsNotice && <div className="app-shell__settings-notice">{settingsNotice}</div>}
+                <ProviderSettingsPanel
+                  settings={settingsQuery.data}
+                  providerStatuses={providerStatuses}
+                  isLoading={settingsQuery.isLoading}
+                    error={settingsQuery.error}
+                    isSaving={updateSettingsMutation.isPending || updateLocalProviderMutation.isPending}
+                  testingProviderId={testingProviderId}
+                  onSaveProvider={handleSaveProvider}
+                  onTestProvider={handleTestProvider}
+                />
+              </section>
+            </div>
+          )}
 
           <footer className="app-shell__statusbar">
             <div className="app-shell__statusbar-group">

@@ -1,4 +1,5 @@
 import type {
+  AIRequest,
   AIRequestContext,
   AIResponse,
   AIUsage,
@@ -81,4 +82,32 @@ export interface ProviderAdapter {
   supportsVision?(modelId: string): boolean;
   supportsStreaming?(modelId: string): boolean;
   shutdown?(): Promise<void>;
+}
+
+/**
+ * GatewayPluginHook allows plugins to modify requests/responses
+ * Inspired by OpenCode's plugin system
+ */
+export interface GatewayPluginHook {
+  name: string;
+  /**
+   * Called before request is routed to provider
+   * Can modify the AIRequest (e.g., add cache keys, modify prompts)
+   */
+  beforeRequest?(request: AIRequest): Promise<AIRequest> | AIRequest;
+  /**
+   * Called after receiving response from provider
+   * Can modify the AIResponse (e.g., log, transform)
+   */
+  afterResponse?(response: AIResponse): Promise<AIResponse> | AIResponse;
+}
+
+/**
+ * Plugin hook registry for managing multiple hooks
+ */
+export interface PluginHookRegistry {
+  register(hook: GatewayPluginHook): void;
+  unregister(name: string): void;
+  beforeRequest(request: AIRequest): Promise<AIRequest>;
+  afterResponse(response: AIResponse): Promise<AIResponse>;
 }

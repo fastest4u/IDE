@@ -13,6 +13,13 @@ interface SessionStoreOptions {
   persist?: boolean;
 }
 
+const MAX_DECISIONS = 50;
+const MAX_CONSTRAINTS = 50;
+const MAX_PATCHES = 30;
+const MAX_MEMORY = 50;
+const MAX_PROVIDER_USAGE = 100;
+const MAX_TEXT_LENGTH = 8000;
+
 export class InMemorySessionStore implements SessionMemoryStore {
   private readonly sessions = new Map<string, TaskState>();
   private loaded = false;
@@ -32,7 +39,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
     const now = new Date().toISOString();
     const state: TaskState = {
       sessionId,
-      goal,
+      goal: sanitizeText(goal),
       decisions: [],
       constraints: [],
       patches: [],
@@ -56,7 +63,8 @@ export class InMemorySessionStore implements SessionMemoryStore {
     await this.load();
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    state.decisions.push(decision);
+    state.decisions.push(sanitizeText(decision));
+    state.decisions.splice(0, Math.max(0, state.decisions.length - MAX_DECISIONS));
     this.touch(sessionId);
     await this.persist();
   }
@@ -65,7 +73,8 @@ export class InMemorySessionStore implements SessionMemoryStore {
     await this.load();
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    state.constraints.push(constraint);
+    state.constraints.push(sanitizeText(constraint));
+    state.constraints.splice(0, Math.max(0, state.constraints.length - MAX_CONSTRAINTS));
     this.touch(sessionId);
     await this.persist();
   }
@@ -74,12 +83,14 @@ export class InMemorySessionStore implements SessionMemoryStore {
     await this.load();
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    const existing = state.patches.findIndex((p) => p.patchId === patch.patchId);
+    const normalized = normalizePatch(patch);
+    const existing = state.patches.findIndex((p) => p.patchId === normalized.patchId);
     if (existing !== -1) {
-      state.patches[existing] = patch;
+      state.patches[existing] = normalized;
     } else {
-      state.patches.push(patch);
+      state.patches.push(normalized);
     }
+    state.patches.splice(0, Math.max(0, state.patches.length - MAX_PATCHES));
     this.touch(sessionId);
     await this.persist();
   }
@@ -88,7 +99,8 @@ export class InMemorySessionStore implements SessionMemoryStore {
     await this.load();
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    state.memory.push(record);
+    state.memory.push(normalizeMemoryRecord(record));
+    state.memory.splice(0, Math.max(0, state.memory.length - MAX_MEMORY));
     this.touch(sessionId);
     await this.persist();
   }
@@ -100,7 +112,8 @@ export class InMemorySessionStore implements SessionMemoryStore {
     await this.load();
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    state.providerUsage.push(usage);
+    state.providerUsage.push(normalizeProviderUsage(usage));
+    state.providerUsage.splice(0, Math.max(0, state.providerUsage.length - MAX_PROVIDER_USAGE));
     this.touch(sessionId);
     await this.persist();
   }
@@ -109,7 +122,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
     await this.load();
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    state.lastHandoffSummary = summary;
+    state.lastHandoffSummary = sanitizeText(summary);
     this.touch(sessionId);
     await this.persist();
   }
@@ -138,7 +151,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
       const raw = await fs.readFile(this.options.persistenceFilePath, 'utf8');
       const parsed = JSON.parse(raw) as { sessions?: TaskState[] };
       for (const session of parsed.sessions ?? []) {
-        this.sessions.set(session.sessionId, session);
+        this.sessions.set(session.sessionId, normalizeTaskState(session));
       }
     } catch {}
   }
@@ -155,4 +168,47 @@ export class InMemorySessionStore implements SessionMemoryStore {
       'utf8',
     );
   }
+}
+
+function sanitizeText(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT_LENGTH);
+}
+
+function normalizeMemoryRecord(record: MemoryRecord): MemoryRecord {
+  return {
+    ...record,
+    summary: sanitizeText(record.summary),
+    detail: record.detail ? sanitizeText(record.detail) : undefined,
+    source: sanitizeText(record.source),
+    metadata: record.metadata,
+  };
+}
+
+function normalizePatch(patch: PatchMemory): PatchMemory {
+  return {
+    ...patch,
+    title: sanitizeText(patch.title),
+    filePath: sanitizeText(patch.filePath),
+    summary: sanitizeText(patch.summary),
+  };
+}
+
+function normalizeProviderUsage(usage: ProviderUsageOutcome): ProviderUsageOutcome {
+  return {
+    ...usage,
+    errorMessage: usage.errorMessage ? sanitizeText(usage.errorMessage) : undefined,
+  };
+}
+
+function normalizeTaskState(state: TaskState): TaskState {
+  return {
+    ...state,
+    goal: sanitizeText(state.goal),
+    decisions: state.decisions.map(sanitizeText).slice(-MAX_DECISIONS),
+    constraints: state.constraints.map(sanitizeText).slice(-MAX_CONSTRAINTS),
+    patches: state.patches.map(normalizePatch).slice(-MAX_PATCHES),
+    memory: state.memory.map(normalizeMemoryRecord).slice(-MAX_MEMORY),
+    providerUsage: state.providerUsage.map(normalizeProviderUsage).slice(-MAX_PROVIDER_USAGE),
+    lastHandoffSummary: sanitizeText(state.lastHandoffSummary),
+  };
 }

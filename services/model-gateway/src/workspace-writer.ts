@@ -18,10 +18,19 @@ export interface GuardedWorkspacePath {
 
 const DENIED_PATH_SEGMENTS = new Set(['.git', 'node_modules']);
 const DEFAULT_MAX_READ_BYTES = 512 * 1024;
+const MAX_PATH_LENGTH = 4096;
 
 function isWithinRoot(rootDir: string, candidatePath: string): boolean {
   const relative = path.relative(rootDir, candidatePath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function normalizeRelativePath(filePath: string): string {
+  return filePath.trim().replace(/\\/g, '/');
+}
+
+function hasDeniedPathSegment(relativePath: string): boolean {
+  return relativePath.split('/').some((segment) => DENIED_PATH_SEGMENTS.has(segment) || segment === '..' || segment === '.');
 }
 
 export class WorkspaceWriter {
@@ -41,32 +50,32 @@ export class WorkspaceWriter {
   }
 
   resolvePath(filePath: string): GuardedWorkspacePath {
-    const rawPath = filePath.trim();
+    const rawPath = normalizeRelativePath(filePath);
     if (!rawPath || rawPath.includes('\0')) {
       throw new WorkspacePathError('Patch target path is empty or invalid');
     }
-
+    if (rawPath.length > MAX_PATH_LENGTH) {
+      throw new WorkspacePathError('Patch target path is too long');
+    }
     if (path.isAbsolute(rawPath)) {
       throw new WorkspacePathError('Patch target path must be workspace-relative');
     }
 
-    const absolutePath = path.resolve(this.rootDir, rawPath);
+    const normalizedRelativePath = path.posix.normalize(rawPath);
+    if (!normalizedRelativePath || normalizedRelativePath === '.' || normalizedRelativePath.startsWith('../') || normalizedRelativePath.includes('/../')) {
+      throw new WorkspacePathError(`Patch target escapes workspace root: ${filePath}`);
+    }
+    if (hasDeniedPathSegment(normalizedRelativePath)) {
+      throw new WorkspacePathError(`Patch target uses a protected workspace path: ${normalizedRelativePath}`);
+    }
+
+    const absolutePath = path.resolve(this.rootDir, normalizedRelativePath);
 
     if (!isWithinRoot(this.rootDir, absolutePath)) {
       throw new WorkspacePathError(`Patch target escapes workspace root: ${filePath}`);
     }
 
-    const relativePath = path.relative(this.rootDir, absolutePath).split(path.sep).join('/');
-    if (!relativePath || relativePath === '.') {
-      throw new WorkspacePathError('Patch target cannot be the workspace root');
-    }
-
-    const segments = relativePath.split('/');
-    if (segments.some((segment) => DENIED_PATH_SEGMENTS.has(segment))) {
-      throw new WorkspacePathError(`Patch target uses a protected workspace path: ${relativePath}`);
-    }
-
-    return { absolutePath, relativePath };
+    return { absolutePath, relativePath: normalizedRelativePath };
   }
 
   async readFile(filePath: string): Promise<string | null> {
@@ -79,6 +88,9 @@ export class WorkspaceWriter {
     } catch (err) {
       if (isNodeError(err) && err.code === 'ENOENT') {
         return null;
+      }
+      if (isNodeError(err) && err.code === 'EISDIR') {
+        throw new WorkspacePathError(`Patch target is a directory, not a file: ${guardedPath.relativePath}`);
       }
       throw err;
     }
@@ -134,6 +146,10 @@ export class WorkspaceWriter {
       : absolutePath;
 
     try {
+      const stat = await fs.lstat(pathToCheck);
+      if (stat.isSymbolicLink()) {
+        throw new WorkspacePathError(`Patch target cannot be a symlink: ${pathToCheck}`);
+      }
       const realPath = await fs.realpath(pathToCheck);
       if (!isWithinRoot(rootRealPath, realPath)) {
         throw new WorkspacePathError(`Patch target resolves outside workspace root: ${absolutePath}`);
@@ -153,7 +169,10 @@ export class WorkspaceWriter {
     let current = startDir;
     while (isWithinRoot(this.rootDir, current)) {
       try {
-        const stat = await fs.stat(current);
+        const stat = await fs.lstat(current);
+        if (stat.isSymbolicLink()) {
+          throw new WorkspacePathError(`Patch target parent cannot traverse symlink: ${current}`);
+        }
         if (stat.isDirectory()) {
           return current;
         }

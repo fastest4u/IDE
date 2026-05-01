@@ -3,6 +3,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 export interface RequestGuardOptions {
   allowedOrigins?: string[];
   maxBodyBytes?: number;
+  isOriginAllowed?: (origin: string) => boolean;
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {
@@ -12,11 +13,12 @@ function isLoopbackAddress(address: string | undefined): boolean {
 
 export function createOriginGuard(options: RequestGuardOptions = {}) {
   const allowedOrigins = options.allowedOrigins ?? [];
+  const isOriginAllowed = options.isOriginAllowed ?? ((origin: string) => allowedOrigins.includes(origin));
   const maxBodyBytes = options.maxBodyBytes ?? 256 * 1024;
 
   return async function originGuard(request: FastifyRequest, reply: FastifyReply) {
     const origin = request.headers.origin;
-    if (origin && !allowedOrigins.includes(origin)) {
+    if (origin && !isOriginAllowed(origin)) {
       return reply.code(403).send({ code: 'ORIGIN_DENIED', message: 'Request origin is not allowed' });
     }
 

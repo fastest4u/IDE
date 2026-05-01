@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
+    "@fastify/websocket": "^11.0.0",
     "@ide/ai-core": "workspace:*",
     "@ide/protocol": "workspace:*",
     "@ide/workspace-core": "workspace:*",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.20.6"
   }
 }

@@ -14,6 +14,7 @@ export interface ProviderModelConfig {
 export interface ProviderConnectionConfig {
   providerId: ProviderId;
   baseUrl?: string;
+  apiKey?: string;
   apiKeyEnv?: string;
   models: ProviderModelConfig[];
   timeoutMs?: number;
