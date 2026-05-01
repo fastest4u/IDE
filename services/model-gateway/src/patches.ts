@@ -21,6 +21,7 @@ import type {
 import { AI_PATCH_TOOL_NAME } from '@ide/protocol';
 
 import { WorkspacePathError, WorkspaceWriter } from './workspace-writer';
+import { CacheOrchestrator } from './cache-orchestrator';
 
 export class PatchServiceError extends Error {
   constructor(
@@ -103,6 +104,8 @@ export class FileBackedPatchStore extends PatchStore {
 }
 
 export class PatchService {
+  private readonly cache = new CacheOrchestrator();
+
   constructor(
     private readonly store: PatchStore = new PatchStore(),
     private readonly writer = new WorkspaceWriter(),
@@ -146,6 +149,7 @@ export class PatchService {
 
     await this.persistStore();
     await this.recordPatchMemory(patch, 'created');
+    this.cache.invalidate({ type: 'patch.changed', namespace: 'patch-review', scope: 'workspace', scopeId: this.getPatchScopeId(patch) });
     return patch;
   }
 
@@ -157,7 +161,9 @@ export class PatchService {
     const operations = Array.isArray(args.operations)
       ? args.operations
       : [{ id: 'op-1', kind: 'write_file', filePath: stringFromUnknown(args.filePath) ?? stringFromUnknown(args.path) ?? input.fallbackFilePath, beforeContent: stringFromUnknown(args.beforeContent), afterContent: stringFromUnknown(args.afterContent) ?? stringFromUnknown(args.content) ?? stringFromUnknown(args.newContent) }];
-    return this.create({ id: input.toolCall.id, title: stringFromUnknown(args.title) ?? 'AI patch proposal', summary: stringFromUnknown(args.summary), sessionId: input.sessionId, operations: operations as PatchOperation[] });
+    const patch = await this.create({ id: input.toolCall.id, title: stringFromUnknown(args.title) ?? 'AI patch proposal', summary: stringFromUnknown(args.summary), sessionId: input.sessionId, operations: operations as PatchOperation[] });
+    await this.assertPatchSafety(patch);
+    return patch;
   }
 
   async approve(id: string): Promise<PatchRecord | null> {
@@ -171,6 +177,7 @@ export class PatchService {
       if (updated) await this.recordPatchMemory(updated, 'review_blocked');
       throw new PatchServiceError('Patch approval blocked by verifier checks', 409, 'PATCH_REVIEW_BLOCKED');
     }
+    await this.assertPatchSafety(current);
     return this.updateStatus(id, 'approved', ['Patch approved for apply', ...reviewNotes], review);
   }
 
@@ -194,6 +201,7 @@ export class PatchService {
     if (current.status !== 'approved') {
       throw new PatchServiceError('Patch must be approved before apply', 409, 'PATCH_NOT_APPROVED');
     }
+    await this.assertPatchSafety(current);
     const rollbackEntries: PatchRollbackEntry[] = [];
     const appliedAt = new Date().toISOString();
     try {
@@ -251,6 +259,10 @@ export class PatchService {
     }
   }
 
+  private getPatchScopeId(patch: PatchRecord): string | undefined {
+    return patch.sessionId ?? patch.operations[0]?.filePath;
+  }
+
   private async reviewOperations(operations: PatchOperation[]): Promise<PatchReviewResult> {
     const findings: PatchReviewFinding[] = [];
     for (const operation of operations) {
@@ -281,6 +293,7 @@ export class PatchService {
 
   private normalizeOperations(operations: PatchOperation[]): PatchOperation[] {
     if (!Array.isArray(operations) || operations.length === 0) throw new PatchServiceError('Patch requires at least one operation');
+    if (operations.length > 20) throw new PatchServiceError('Patch contains too many operations', 400, 'PATCH_TOO_LARGE');
     return operations.map((operation, index) => {
       if (!operation || typeof operation !== 'object') throw new PatchServiceError('Patch operation must be an object');
       const kind = operation.kind;
@@ -288,6 +301,7 @@ export class PatchService {
       if (typeof operation.filePath !== 'string') throw new PatchServiceError('Patch operation requires filePath');
       const filePath = operation.filePath.trim();
       if (!filePath) throw new PatchServiceError('Patch operation requires filePath');
+      if (filePath.length > 4096) throw new PatchServiceError('Patch operation filePath is too long');
       if (operation.beforeContent !== undefined && typeof operation.beforeContent !== 'string') throw new PatchServiceError('beforeContent must be a string when provided');
       if (kind === 'write_file' && typeof operation.afterContent !== 'string') throw new PatchServiceError('write_file operation requires afterContent');
       if (kind === 'delete_file' && operation.afterContent !== undefined && typeof operation.afterContent !== 'string') throw new PatchServiceError('afterContent must be a string when provided');
@@ -303,6 +317,22 @@ export class PatchService {
       diffs.push(buildStructuredDiff(operation.filePath, operation.kind, previousContent, nextContent));
     }
     return diffs;
+  }
+
+  private async assertPatchSafety(patch: PatchRecord): Promise<void> {
+    for (const operation of patch.operations) {
+      this.writer.resolvePath(operation.filePath);
+      const normalized = operation.filePath.replace(/\\/g, '/');
+      if (normalized.includes('/.git/') || normalized.startsWith('.git/') || normalized.includes('/node_modules/') || normalized.startsWith('node_modules/')) {
+        throw new PatchServiceError(`Patch target is not allowed: ${operation.filePath}`, 403, 'PATCH_PATH_DENIED');
+      }
+      if (normalized.includes('/../') || normalized.startsWith('../') || normalized.endsWith('/..') || normalized === '..') {
+        throw new PatchServiceError(`Patch target escapes workspace root: ${operation.filePath}`, 403, 'PATCH_PATH_DENIED');
+      }
+      if (operation.kind === 'write_file' && operation.afterContent && Buffer.byteLength(operation.afterContent, 'utf8') > 512 * 1024) {
+        throw new PatchServiceError(`Patch write is too large: ${operation.filePath}`, 413, 'PATCH_CONTENT_TOO_LARGE');
+      }
+    }
   }
 
   private assertPrecondition(operation: PatchOperation, previousContent: string | null): void {

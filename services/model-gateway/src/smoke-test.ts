@@ -1,4 +1,5 @@
 import { AI_PATCH_TOOL_SPEC, type AIRequest } from '@ide/protocol';
+import { createStableCacheKey, StableMemoryCache } from './index';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -409,6 +410,41 @@ try {
   });
   assertStatus(deniedAbsolutePatch.statusCode, 400, 'POST /patches denies absolute path');
 
+  const deniedNodeModulesPatch = await app.inject({
+    method: 'POST',
+    url: '/patches',
+    payload: {
+      title: 'Denied protected path patch',
+      operations: [
+        {
+          id: 'op-denied-node-modules',
+          kind: 'write_file',
+          filePath: 'node_modules/escape.txt',
+          afterContent: 'escape\n',
+        },
+      ],
+    },
+  });
+  assertStatus(deniedNodeModulesPatch.statusCode, 403, 'POST /patches denies protected workspace path');
+
+  const longPath = `${'a/'.repeat(300)}file.txt`;
+  const deniedLongPathPatch = await app.inject({
+    method: 'POST',
+    url: '/patches',
+    payload: {
+      title: 'Denied long path patch',
+      operations: [
+        {
+          id: 'op-denied-long-path',
+          kind: 'write_file',
+          filePath: longPath,
+          afterContent: 'escape\n',
+        },
+      ],
+    },
+  });
+  assertStatus(deniedLongPathPatch.statusCode, 400, 'POST /patches denies overly long file path');
+
   const createPatch = await app.inject({
     method: 'POST',
     url: '/patches',
@@ -514,6 +550,21 @@ try {
   const approveStalePatch = await app.inject({ method: 'POST', url: '/patches/patch-stale-precondition/approve' });
   assertStatus(approveStalePatch.statusCode, 409, 'POST /patches/:patchId/approve stale precondition');
 
+  const largePatch = await app.inject({
+    method: 'POST',
+    url: '/patches',
+    payload: {
+      title: 'Large patch should be rejected',
+      operations: Array.from({ length: 21 }, (_, index) => ({
+        id: `op-large-${index}`,
+        kind: 'write_file',
+        filePath: `bulk-${index}.txt`,
+        afterContent: 'x\n',
+      })),
+    },
+  });
+  assertStatus(largePatch.statusCode, 400, 'POST /patches rejects too many operations');
+
   const patchSession = await app.inject({
     method: 'GET',
     url: `/sessions/${sessionId}`,
@@ -536,6 +587,24 @@ try {
 
   const adapter = controller.getAdapter('openai');
   assert(!!adapter, 'openai adapter should be registered');
+
+  const keyA = createStableCacheKey({
+    namespace: 'context-packet',
+    version: 'v1',
+    parts: [{ b: 2, a: 1 }, ['  hello\nworld  ', true, null]],
+  });
+  const keyB = createStableCacheKey({
+    namespace: 'context-packet',
+    version: 'v1',
+    parts: [{ a: 1, b: 2 }, ['hello world', true, null]],
+  });
+  assert(keyA === keyB, 'stable cache key should be order- and whitespace-insensitive');
+
+  const cache = new StableMemoryCache<string>({ defaultTtlMs: 20 });
+  cache.set('one', 'value-1', 'session');
+  assert(cache.get('one') === 'value-1', 'cache should return freshly stored value');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert(cache.get('one') === undefined, 'cache entry should expire after TTL');
 
   console.log('OK: all smoke tests passed');
   console.log(`Usage records: ${usageLog.list().length}`);

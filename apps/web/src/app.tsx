@@ -3,19 +3,23 @@ import Editor, { loader } from '@monaco-editor/react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AI_PATCH_TOOL_SPEC } from '@ide/protocol';
-import type { AIDiagnosticSummary } from '@ide/protocol';
+import type { AIDiagnosticSummary, IDESettings, LocalProviderSettings, ProviderId, ProviderRuntimeStatus } from '@ide/protocol';
 
 import './styles.css';
 
 import {
   indexWorkspace,
   listPatches,
-  streamAIResponse,
+  streamAIResponseWS,
   getWorkspaceFile,
   getWorkspaceSummary,
+  getSettings,
   listWorkspaceFiles,
   saveWorkspaceFile,
   getProviderRuntimeStatus,
+  testProviderConnection,
+  updateLocalProvider,
+  updateSettings,
 } from './services/model-gateway';
 import { Terminal, useTerminalOutput } from './components/terminal';
 import { WorkspaceSelector } from './components/workspace-selector';
@@ -37,7 +41,6 @@ interface ChatMessage {
 }
 
 type WorkspacePresence = 'ready' | 'missing' | 'error';
-
 interface WorkspaceViewState {
   name: string;
   summary: string;
@@ -164,6 +167,29 @@ function useProviderRuntimeStatusQuery() {
     queryFn: getProviderRuntimeStatus,
     staleTime: 10_000,
     retry: false,
+  });
+}
+
+function useSettingsQuery(enabled: boolean) {
+  return useQuery({
+    queryKey: ['settings', 'local'],
+    queryFn: getSettings,
+    enabled,
+    staleTime: 10_000,
+    retry: false,
+  });
+}
+
+function useUpdateSettingsMutation() {
+  return useMutation({
+    mutationFn: updateSettings,
+  });
+}
+
+function useUpdateLocalProviderMutation() {
+  return useMutation({
+    mutationFn: ({ providerId, provider }: { providerId: ProviderId; provider: LocalProviderSettings }) =>
+      updateLocalProvider(providerId, provider as unknown as Record<string, unknown>),
   });
 }
 
@@ -448,6 +474,259 @@ function ExplorerTree({
   );
 }
 
+function providerTitle(providerId: ProviderId): string {
+  switch (providerId) {
+    case 'opencode-go':
+      return 'OpenCode Go';
+    case 'custom':
+      return 'Custom OpenAI';
+    default:
+      return providerId;
+  }
+}
+
+function providerDescription(providerId: ProviderId): string {
+  switch (providerId) {
+    case 'opencode-go':
+      return 'Curated models including Kimi, GLM, DeepSeek and more.';
+    case 'custom':
+      return 'Any OpenAI-compatible /v1 API endpoint.';
+    default:
+      return 'Provider runtime.';
+  }
+}
+
+function providerBadge(provider: LocalProviderSettings): string {
+  if (provider.apiKey || provider.apiKeyEnv) {
+    return 'API key';
+  }
+  if (provider.providerId === 'custom') {
+    return 'Custom';
+  }
+  return 'Local';
+}
+
+function providerGlyph(providerId: ProviderId): string {
+  switch (providerId) {
+    case 'opencode-go':
+      return 'G';
+    case 'custom':
+      return '{}';
+    default:
+      return '+';
+  }
+}
+
+function ProviderSettingsPanel({
+  settings,
+  providerStatuses,
+  isLoading,
+  error,
+  isSaving,
+  testingProviderId,
+  onSaveProvider,
+  onTestProvider,
+}: {
+  settings?: IDESettings;
+  providerStatuses: ProviderRuntimeStatus[];
+  isLoading: boolean;
+  error?: unknown;
+  isSaving: boolean;
+  testingProviderId: ProviderId | null;
+  onSaveProvider: (provider: LocalProviderSettings) => Promise<void>;
+  onTestProvider: (providerId: ProviderId) => Promise<void>;
+}) {
+  const [draftProviders, setDraftProviders] = useState<LocalProviderSettings[]>([]);
+  const [connectingProviderId, setConnectingProviderId] = useState<ProviderId | null>(null);
+  const [connectApiKey, setConnectApiKey] = useState('');
+  const [providerSearch, setProviderSearch] = useState('');
+
+  useEffect(() => {
+    if (settings?.localProviders) {
+      setDraftProviders(settings.localProviders);
+    }
+  }, [settings?.localProviders]);
+
+  const statusByProvider = useMemo(
+    () => new Map(providerStatuses.map((status) => [status.providerId, status])),
+    [providerStatuses],
+  );
+
+  const normalizedProviderSearch = providerSearch.trim().toLowerCase();
+  const visibleProviders = normalizedProviderSearch
+    ? draftProviders.filter((provider) => {
+      const haystack = `${providerTitle(provider.providerId)} ${providerDescription(provider.providerId)} ${provider.providerId}`.toLowerCase();
+      return haystack.includes(normalizedProviderSearch);
+    })
+    : draftProviders;
+  const enabledProviders = visibleProviders.filter((provider) => provider.enabled);
+  const popularProviders = visibleProviders.filter((provider) => !provider.enabled);
+  const connectingProvider = connectingProviderId ? draftProviders.find((provider) => provider.providerId === connectingProviderId) : undefined;
+
+  const handleStartConnect = (provider: LocalProviderSettings) => {
+    setConnectingProviderId(provider.providerId);
+    setConnectApiKey(provider.apiKey ?? '');
+  };
+
+  const handleContinueConnect = async () => {
+    if (!connectingProvider) return;
+    await onSaveProvider({
+      ...connectingProvider,
+      enabled: true,
+      apiKey: connectApiKey.trim() || connectingProvider.apiKey,
+    });
+    setConnectingProviderId(null);
+    setConnectApiKey('');
+  };
+
+  if (isLoading) {
+    return <div className="app-shell__settings-empty">Loading provider settings...</div>;
+  }
+
+  if (error) {
+    return <div className="app-shell__settings-empty">Provider settings API is unavailable.</div>;
+  }
+
+  if (connectingProvider) {
+    return (
+      <section className="app-shell__provider-connect-view" aria-label={`Connect ${providerTitle(connectingProvider.providerId)}`}>
+        <div className="app-shell__provider-connect-nav">
+          <button type="button" className="app-shell__provider-back-button" aria-label="Back to providers" onClick={() => setConnectingProviderId(null)}>
+            ‹
+          </button>
+        </div>
+        <div className="app-shell__provider-connect-title">
+          <div className="app-shell__provider-icon" aria-hidden="true">{providerGlyph(connectingProvider.providerId)}</div>
+          <div>
+            <h3>Connect {providerTitle(connectingProvider.providerId)}</h3>
+            <span>{providerDescription(connectingProvider.providerId)}</span>
+          </div>
+        </div>
+        <p>Enter your {providerTitle(connectingProvider.providerId)} API key to connect your account and use models in this IDE.</p>
+        <label className="app-shell__connect-field">
+          <span>{providerTitle(connectingProvider.providerId)} API key</span>
+          <input
+            type="password"
+            value={connectApiKey}
+            onChange={(event) => setConnectApiKey(event.target.value)}
+          placeholder="API key"
+            autoComplete="off"
+            spellCheck={false}
+        />
+        </label>
+        <div className="app-shell__connect-meta">
+          <span>{connectingProvider.baseUrl}</span>
+          <span>{connectingProvider.models.length} models</span>
+        </div>
+        <button
+          type="button"
+          className="app-shell__connect-primary-button"
+          onClick={() => void handleContinueConnect()}
+          disabled={isSaving}
+        >
+          Continue
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="app-shell__provider-settings" aria-label="Provider settings">
+      <div className="app-shell__provider-search">
+        <span className="app-shell__provider-search-icon" aria-hidden="true" />
+        <input
+          value={providerSearch}
+          onChange={(event) => setProviderSearch(event.target.value)}
+          placeholder="Search providers"
+          spellCheck={false}
+        />
+      </div>
+      <div className="app-shell__provider-settings-list">
+        <div className="app-shell__provider-group">
+          <div className="app-shell__provider-group-title">
+            <span>Providers</span>
+            <small>{enabledProviders.length} connected</small>
+          </div>
+          <div className="app-shell__provider-catalog">
+            {enabledProviders.length === 0 && <div className="app-shell__provider-empty">No provider connected.</div>}
+            {enabledProviders.map((provider) => {
+              const status = statusByProvider.get(provider.providerId);
+              const stateLabel = status?.healthy ? 'ready' : 'not ready';
+              return (
+                <article key={provider.providerId} className="app-shell__provider-row-card app-shell__provider-row-card--connected">
+                  <div className="app-shell__provider-icon" aria-hidden="true">{providerGlyph(provider.providerId)}</div>
+                  <div className="app-shell__provider-main">
+                    <div className="app-shell__provider-title-row">
+                      <strong>{providerTitle(provider.providerId)}</strong>
+                      <span className="app-shell__provider-badge">{providerBadge(provider)}</span>
+                    </div>
+                    <span className={`app-shell__provider-inline-state app-shell__provider-inline-state--${stateLabel.replace(' ', '-')}`}>
+                      {stateLabel}{status?.notes?.[0] ? ` · ${status.notes[0]}` : ''}
+                    </span>
+                    <div className="app-shell__provider-model-strip">
+                      {provider.models.slice(0, 3).map((model) => <span key={model}>{model}</span>)}
+                    </div>
+                  </div>
+                  <div className="app-shell__provider-row-actions">
+                    <button
+                      type="button"
+                      className="app-shell__provider-link-button"
+                      onClick={() => void onTestProvider(provider.providerId)}
+                      disabled={testingProviderId === provider.providerId}
+                    >
+                      {testingProviderId === provider.providerId ? 'Testing' : 'Test'}
+                    </button>
+                    <button
+                      type="button"
+                      className="app-shell__provider-link-button"
+                      onClick={() => void onSaveProvider({ ...provider, enabled: false })}
+                      disabled={isSaving}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="app-shell__provider-group">
+          <div className="app-shell__provider-group-title">
+            <span>Popular providers</span>
+            <small>{popularProviders.length} available</small>
+          </div>
+          <div className="app-shell__provider-catalog">
+            {popularProviders.map((provider) => {
+              return (
+                <article key={provider.providerId} className="app-shell__provider-row-card">
+                  <div className="app-shell__provider-icon" aria-hidden="true">{providerGlyph(provider.providerId)}</div>
+                  <div className="app-shell__provider-main">
+                    <div className="app-shell__provider-title-row">
+                      <strong>{providerTitle(provider.providerId)}</strong>
+                      {provider.providerId === 'opencode-go' && <span className="app-shell__provider-badge">Recommended</span>}
+                    </div>
+                    <span>{providerDescription(provider.providerId)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="app-shell__provider-connect-button"
+                    onClick={() => handleStartConnect(provider)}
+                    disabled={isSaving}
+                  >
+                    <span aria-hidden="true">+</span>
+                    Connect
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function AppShell() {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { file?: string; workspace?: string };
@@ -456,18 +735,25 @@ export function AppShell() {
   const workspaceQuery = useWorkspaceQuery(hasExplicitWorkspaceSelection);
   const patchesQuery = usePatchesQuery();
   const providerStatusQuery = useProviderRuntimeStatusQuery();
+  const settingsQuery = useSettingsQuery(hasExplicitWorkspaceSelection);
   const queryClient = useQueryClient();
   const saveFileMutation = useSaveWorkspaceFileMutation();
+  const updateSettingsMutation = useUpdateSettingsMutation();
+  const updateLocalProviderMutation = useUpdateLocalProviderMutation();
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{ id: 'seed-assistant', role: 'assistant', content: 'Tell me what to inspect, refactor, or patch in this workspace.' }]);
   const [editorSelection, setEditorSelection] = useState<{ text: string; filePath: string } | null>(null);
   const [editorState, setEditorState] = useState<EditorState>({ filePath: '', draft: '', saved: '' });
   const [expandedDirectoryIds, setExpandedDirectoryIds] = useState<Set<string>>(() => new Set([EXPLORER_ROOT_ID]));
+  const [selectedProviderId, setSelectedProviderId] = useState<ProviderId | ''>('');
   const [selectedModelId, setSelectedModelId] = useState('');
   const [selectedMode, setSelectedMode] = useState<'Build' | 'Inspect' | 'Patch'>('Inspect');
   const [selectedReasoningLevel, setSelectedReasoningLevel] = useState<'Default' | 'Low' | 'Medium' | 'High' | 'Max'>('High');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [testingProviderId, setTestingProviderId] = useState<ProviderId | null>(null);
   const [openTabsState, setOpenTabsState] = useState<OpenTab[]>([]);
   const workspaceSyncRef = useRef<string | null>(null);
 
@@ -604,7 +890,8 @@ export function AppShell() {
       return nextTabs;
     });
   }, [activeFile, navigate, queryClient, workspaceRoot]);
-  const activeProvider = providerStatuses.find((provider) => provider.enabled && provider.healthy) ?? providerStatuses.find((provider) => provider.enabled);
+  const readyProviders = providerStatuses.filter((provider) => provider.enabled && provider.healthy && provider.models.length > 0);
+  const activeProvider = readyProviders.find((provider) => provider.providerId === selectedProviderId) ?? readyProviders[0];
   const availableModels = activeProvider?.models ?? [];
   const activeModel = availableModels.find((model) => model.modelId === selectedModelId) ?? availableModels[0];
   const activeModelId = activeModel?.modelId ?? 'No model';
@@ -612,10 +899,22 @@ export function AppShell() {
   const monacoEditorPath = hasWorkspace && activeFile ? getMonacoModelPath(workspaceRoot, activeFile) : 'file:///untitled';
 
   useEffect(() => {
-    if (!selectedModelId && availableModels.length > 0) {
+    if (!activeProvider) {
+      if (selectedProviderId || selectedModelId) {
+        setSelectedProviderId('');
+        setSelectedModelId('');
+      }
+      return;
+    }
+
+    if (selectedProviderId !== activeProvider.providerId) {
+      setSelectedProviderId(activeProvider.providerId);
+    }
+
+    if (!selectedModelId || !availableModels.some((model) => model.modelId === selectedModelId)) {
       setSelectedModelId(availableModels[0].modelId);
     }
-  }, [availableModels, selectedModelId]);
+  }, [activeProvider, availableModels, selectedModelId, selectedProviderId]);
 
   useEffect(() => {
     if (!hasWorkspace || !workspaceRoot) {
@@ -665,6 +964,32 @@ export function AppShell() {
     await queryClient.invalidateQueries({ queryKey: ['workspace-file'] });
   };
 
+  const handleSaveProvider = async (provider: LocalProviderSettings) => {
+    setSettingsNotice(null);
+    try {
+      await updateLocalProviderMutation.mutateAsync({ providerId: provider.providerId, provider });
+      setSettingsNotice(`Saved ${providerTitle(provider.providerId)}.`);
+      await queryClient.invalidateQueries({ queryKey: ['settings'] });
+      await queryClient.invalidateQueries({ queryKey: ['settings', 'provider-status'] });
+    } catch (err) {
+      setSettingsNotice(err instanceof Error ? err.message : 'Provider settings save failed.');
+    }
+  };
+
+  const handleTestProvider = async (providerId: ProviderId) => {
+    setSettingsNotice(null);
+    setTestingProviderId(providerId);
+    try {
+      const result = await testProviderConnection(providerId);
+      setSettingsNotice(`${providerTitle(providerId)} is ${result.ok ? 'ready' : 'not ready'}.`);
+      await queryClient.invalidateQueries({ queryKey: ['settings', 'provider-status'] });
+    } catch (err) {
+      setSettingsNotice(err instanceof Error ? err.message : 'Provider test failed.');
+    } finally {
+      setTestingProviderId(null);
+    }
+  };
+
   const handleSaveFile = async () => {
     if (!activeFile || !isDirty) return;
     const filePath = activeFile;
@@ -708,7 +1033,7 @@ export function AppShell() {
     setMessages((current) => [...current, { id: streamId, role: 'assistant', content: '', warnings: [], toolCalls: [] }]);
 
     try {
-      const collectedText = await streamAIResponse(prompt, {
+      const collectedText = await streamAIResponseWS(prompt, {
         kind: 'edit',
         preferredCapabilities: ['codeEditing', 'tools'],
         context: {
@@ -721,6 +1046,11 @@ export function AppShell() {
           diagnostics,
           terminalOutput,
           repoSummary: workspaceQuery.data?.summary,
+          metadata: activeProvider && activeModel ? {
+            preferredProviderId: activeProvider.providerId,
+            preferredModelId: activeModel.modelId,
+            allowedProviderIds: [activeProvider.providerId],
+          } : undefined,
         },
         tools: [AI_PATCH_TOOL_SPEC],
       }, (event) => {
@@ -797,7 +1127,12 @@ export function AppShell() {
               <div className="app-shell__activity-logo">
                 <span className="app-shell__activity-mark" />
               </div>
-              <button type="button" className="app-shell__activity-item app-shell__activity-item--active" title="Explorer" aria-label="Explorer">
+              <button
+                type="button"
+                className="app-shell__activity-item app-shell__activity-item--active"
+                title="Explorer"
+                aria-label="Explorer"
+              >
                 <span className="app-shell__activity-glyph app-shell__activity-glyph--files" aria-hidden="true" />
               </button>
               <button type="button" className="app-shell__activity-item" title="Search" aria-label="Search">
@@ -806,11 +1141,17 @@ export function AppShell() {
               <button type="button" className="app-shell__activity-item" title="Agent" aria-label="Agent">
                 <span className="app-shell__activity-glyph app-shell__activity-glyph--branch" aria-hidden="true" />
               </button>
-              <button type="button" className="app-shell__activity-item" title="Settings" aria-label="Settings">
-                <span className="app-shell__activity-glyph app-shell__activity-glyph--run" aria-hidden="true" />
-              </button>
               <div className="app-shell__activity-spacer" />
-              <div className="app-shell__activity-meta">
+              <button
+                type="button"
+                className={isSettingsOpen ? 'app-shell__activity-item app-shell__activity-item--active' : 'app-shell__activity-item'}
+                title="Settings"
+                aria-label="Settings"
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                <span className="app-shell__activity-glyph app-shell__activity-glyph--settings" aria-hidden="true" />
+              </button>
+              <div className="app-shell__activity-meta" title="Profile" aria-label="Profile">
                 <span className="app-shell__activity-glyph app-shell__activity-glyph--account" aria-hidden="true" />
               </div>
             </nav>
@@ -1022,18 +1363,22 @@ export function AppShell() {
                     <select
                       id="model-select"
                       className="app-shell__agent-omnibar-select"
-                      value={activeModelId === 'No model' ? '' : activeModelId}
-                      onChange={(event) => setSelectedModelId(event.target.value)}
-                      disabled={availableModels.length === 0}
+                      value={activeProvider && activeModel ? `${activeProvider.providerId}/${activeModel.modelId}` : ''}
+                      onChange={(event) => {
+                        const [providerId, ...modelSegments] = event.target.value.split('/');
+                        setSelectedProviderId(providerId as ProviderId);
+                        setSelectedModelId(modelSegments.join('/'));
+                      }}
+                      disabled={readyProviders.length === 0}
                     >
-                      {availableModels.length === 0 ? (
+                      {readyProviders.length === 0 ? (
                         <option value="">No model</option>
                       ) : (
-                        availableModels.map((model) => (
-                          <option key={model.modelId} value={model.modelId}>
-                            {model.modelId}
+                        readyProviders.flatMap((provider) => provider.models.map((model) => (
+                          <option key={`${provider.providerId}/${model.modelId}`} value={`${provider.providerId}/${model.modelId}`}>
+                            {providerTitle(provider.providerId)} · {model.modelId}
                           </option>
-                        ))
+                        )))
                       )}
                     </select>
                   </div>
@@ -1056,6 +1401,39 @@ export function AppShell() {
               </form>
             </aside>
           </main>
+
+          {isSettingsOpen && (
+            <div className="app-shell__modal-backdrop" role="presentation" onMouseDown={() => setIsSettingsOpen(false)}>
+              <section
+                className="app-shell__settings-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="settings-modal-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <header className="app-shell__settings-modal-header">
+                  <div>
+                    <h2 id="settings-modal-title">Settings</h2>
+                    <span>Providers</span>
+                  </div>
+                  <button type="button" className="app-shell__icon-button" aria-label="Close settings" onClick={() => setIsSettingsOpen(false)}>
+                    ×
+                  </button>
+                </header>
+                {settingsNotice && <div className="app-shell__settings-notice">{settingsNotice}</div>}
+                <ProviderSettingsPanel
+                  settings={settingsQuery.data}
+                  providerStatuses={providerStatuses}
+                  isLoading={settingsQuery.isLoading}
+                    error={settingsQuery.error}
+                    isSaving={updateSettingsMutation.isPending || updateLocalProviderMutation.isPending}
+                  testingProviderId={testingProviderId}
+                  onSaveProvider={handleSaveProvider}
+                  onTestProvider={handleTestProvider}
+                />
+              </section>
+            </div>
+          )}
 
           <footer className="app-shell__statusbar">
             <div className="app-shell__statusbar-group">

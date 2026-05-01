@@ -122,6 +122,7 @@ export type ProviderId =
   | 'deepseek'
   | 'ollama'
   | 'vllm'
+  | 'opencode-go'
   | 'custom';
 
 export interface RoutingCandidate {

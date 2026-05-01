@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type {
   IDESettingsUpdate,
+  LocalProviderSettings,
+  LocalProviderId,
   ProviderId,
   ProviderRuntimeStatus,
   ProviderRuntimeStatusResponse,
@@ -98,6 +100,48 @@ export const registerSettingsRoutes: FastifyPluginAsync<SettingsRoutesOptions> =
   app.get('/settings/local-providers', async () => ({
     providers: settingsService.getSettings().localProviders,
   }));
+
+  app.patch('/settings/providers/:providerId', async (request, reply) => {
+    const { providerId } = request.params as { providerId: ProviderId };
+    if (!isLocalProviderId(providerId)) {
+      return reply.code(400).send({ code: 'INVALID_PROVIDER', message: `Invalid provider: ${providerId}` });
+    }
+
+    const provider = request.body as Partial<LocalProviderSettings>;
+    if (provider.providerId && provider.providerId !== providerId) {
+      return reply.code(400).send({ code: 'PROVIDER_MISMATCH', message: 'Provider payload does not match route providerId.' });
+    }
+
+    const currentProvider = settingsService.getSettings().localProviders.find((item) => item.providerId === providerId);
+    if (!currentProvider) {
+      return reply.code(404).send({ code: 'PROVIDER_NOT_FOUND', message: `Provider settings were not found: ${providerId}` });
+    }
+
+    const previousSettings = settingsService.getSettings();
+    try {
+      const settings = settingsService.updateLocalProvider({
+        ...currentProvider,
+        ...provider,
+        providerId,
+      });
+      await options.onSettingsUpdated?.();
+
+      if (controller && !(await localOnlyScopesAreReachable(settingsService, controller))) {
+        settingsService.restoreSettings(previousSettings);
+        await options.onSettingsUpdated?.();
+        return reply.code(409).send({
+          code: 'LOCAL_MODEL_UNAVAILABLE',
+          message: 'localOnly policy requires at least one reachable local model. Enable Ollama/vLLM or keep standard routing.',
+        });
+      }
+
+      return { settings };
+    } catch (err) {
+      settingsService.restoreSettings(previousSettings);
+      await options.onSettingsUpdated?.();
+      return sendSettingsError(reply, err);
+    }
+  });
 
   app.get('/settings/provider-status', async (): Promise<ProviderRuntimeStatusResponse> => {
     const providers = await buildProviderStatuses(settingsService, controller);
@@ -203,6 +247,11 @@ function isProviderId(value: unknown): value is ProviderId {
     value === 'deepseek' ||
     value === 'ollama' ||
     value === 'vllm' ||
+    value === 'opencode-go' ||
     value === 'custom'
   );
+}
+
+function isLocalProviderId(value: unknown): value is LocalProviderId {
+  return value === 'opencode-go' || value === 'custom';
 }

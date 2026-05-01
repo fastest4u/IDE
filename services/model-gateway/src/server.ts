@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import fastifyWebsocket from '@fastify/websocket';
 import path from 'node:path';
 
 import type { ProviderAdapter } from '@ide/protocol';
@@ -38,6 +39,7 @@ import { LocalFirstSettingsService } from './settings';
 import { TerminalSessionService } from './terminal/terminal-session';
 import { createOriginGuard } from './security/request-guard';
 import { NativeWorkspacePickerService, type WorkspacePickerService } from './workspace-picker';
+import { createCacheKeyPlugin } from './plugin-hooks';
 
 export interface ModelGatewayServerOptions {
   port?: number;
@@ -63,6 +65,33 @@ function getAllowedOrigins(): string[] {
   return configured?.length ? configured : DEFAULT_ALLOWED_ORIGINS;
 }
 
+function isPrivateDevHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('127.') ||
+    hostname.startsWith('10.') ||
+    hostname.startsWith('192.168.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
+}
+
+function createAllowedOriginMatcher(allowedOrigins: string[]) {
+  const explicit = new Set(allowedOrigins);
+  return (origin: string): boolean => {
+    if (explicit.has(origin)) return true;
+    if (process.env.IDE_ALLOWED_ORIGINS) return false;
+
+    try {
+      const url = new URL(origin);
+      return (url.protocol === 'http:' || url.protocol === 'https:')
+        && isPrivateDevHost(url.hostname);
+    } catch {
+      return false;
+    }
+  };
+}
+
 function buildAdapter(config: ProviderConnectionConfig): ProviderAdapter | null {
   switch (config.providerId) {
     case 'anthropic':
@@ -78,11 +107,12 @@ function buildAdapter(config: ProviderConnectionConfig): ProviderAdapter | null 
     case 'mistral':
     case 'deepseek':
     case 'vllm':
+    case 'opencode-go':
     case 'custom':
       return new OpenAICompatibleAdapter({
         providerId: config.providerId,
         baseUrl: config.baseUrl,
-        apiKey: config.apiKeyEnv ? process.env[config.apiKeyEnv] : undefined,
+        apiKey: config.apiKey ?? (config.apiKeyEnv ? process.env[config.apiKeyEnv] : undefined),
         models: config.models.map((m) => m.modelId),
         timeoutMs: config.timeoutMs,
       });
@@ -180,15 +210,34 @@ export async function createModelGatewayServer(
     settingsService,
   );
 
+  // Register OpenCode-style cache key stabilization plugin
+  controller.registerPluginHook(
+    createCacheKeyPlugin({
+      useWorkspaceBasedKey: true,
+      workspaceRoot,
+    }),
+  );
+
   const allowedOrigins = getAllowedOrigins();
+  const isOriginAllowed = createAllowedOriginMatcher(allowedOrigins);
 
   await app.register(cors, {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin || isOriginAllowed(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'OPTIONS'],
     credentials: true,
   });
 
+  await app.register(fastifyWebsocket);
+
   app.addHook('onRequest', createOriginGuard({
     allowedOrigins,
+    isOriginAllowed,
     maxBodyBytes: Number(process.env.IDE_MAX_BODY_BYTES ?? '262144'),
   }));
 

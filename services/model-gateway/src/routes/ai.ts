@@ -1,8 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { WebSocket } from 'ws';
 
 import type { AIController } from '../controller';
 import type {
   AIRequest,
+  AIStreamEvent,
   CollaborationRequest,
   ProviderEmbedRequest,
   ProviderRerankRequest,
@@ -28,25 +30,78 @@ export const registerAIRoutes: FastifyPluginAsync<AIRoutesOptions> = async (app,
       return reply.code(400).send({ code: 'AI_REQUEST_INVALID', message: 'AI request body is invalid' });
     }
     const abortController = new AbortController();
-    request.raw.on('close', () => abortController.abort());
+    reply.raw.on('close', () => abortController.abort());
     const body = request.body;
     const stream = await controller.handleStream(body, { signal: abortController.signal });
+    const origin = request.headers.origin;
 
     reply.raw.setHeader('content-type', 'text/event-stream; charset=utf-8');
     reply.raw.setHeader('cache-control', 'no-cache');
     reply.raw.setHeader('connection', 'keep-alive');
+    reply.raw.setHeader('vary', 'Origin');
+    if (origin) {
+      reply.raw.setHeader('access-control-allow-origin', origin);
+      reply.raw.setHeader('access-control-allow-credentials', 'true');
+    }
+
+    reply.hijack();
 
     try {
       for await (const event of stream) {
         if (abortController.signal.aborted) break;
-        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        const line = `data: ${JSON.stringify(event)}\n\n`;
+        if (!reply.raw.write(line)) {
+          await new Promise<void>((resolve) => reply.raw.once('drain', resolve));
+        }
       }
+      reply.raw.write('data: [DONE]\n\n');
     } finally {
       if (!reply.raw.destroyed) {
         reply.raw.end();
       }
     }
-    return reply;
+  });
+  
+  app.get('/ai/agent', { websocket: true }, (socket: WebSocket) => {
+    let agentAbort: AbortController | null = null;
+
+    socket.on('message', async (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as { type: string; id: string; method: string; params: AIRequest };
+
+        if (msg.type !== 'req' || msg.method !== 'agent') {
+          socket.send(JSON.stringify({ type: 'res', id: msg.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'Expected req with method: agent' } }));
+          return;
+        }
+
+        const request = msg.params;
+        if (!isAIRequest(request)) {
+          socket.send(JSON.stringify({ type: 'res', id: msg.id, ok: false, error: { code: 'AI_REQUEST_INVALID', message: 'AI request body is invalid' } }));
+          return;
+        }
+
+        agentAbort?.abort();
+        agentAbort = new AbortController();
+        const signal = agentAbort.signal;
+
+        const stream = await controller.handleStream(request, { signal });
+
+        let fullText = '';
+        for await (const event of stream as AsyncIterable<AIStreamEvent>) {
+          if (signal.aborted) break;
+          socket.send(JSON.stringify({ type: 'event', event: event.type, payload: event }));
+          if (event.type === 'delta') fullText += event.text;
+        }
+
+        socket.send(JSON.stringify({ type: 'res', id: msg.id, ok: true, payload: { text: fullText } }));
+      } catch (err) {
+        socket.send(JSON.stringify({ type: 'event', event: 'lifecycle', payload: { phase: 'error', message: err instanceof Error ? err.message : String(err) } }));
+      }
+    });
+
+    socket.on('close', () => {
+      agentAbort?.abort();
+    });
   });
 
   app.post('/ai/collaborate', async (request, reply) => {
