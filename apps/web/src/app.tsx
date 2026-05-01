@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
-import { Link, useNavigate, useSearch } from '@tanstack/react-router';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AI_PATCH_TOOL_SPEC } from '@ide/protocol';
 import type { AIDiagnosticSummary } from '@ide/protocol';
@@ -374,19 +374,6 @@ function buildFileTree(files: string[]): FileTreeNode[] {
   return sortNodes(root);
 }
 
-function getExplorerAncestorIds(filePath: string): string[] {
-  const segments = filePath.split('/').filter(Boolean);
-  const ancestors = [EXPLORER_ROOT_ID];
-  let cursor = '';
-
-  for (const segment of segments.slice(0, -1)) {
-    cursor = cursor ? `${cursor}/${segment}` : segment;
-    ancestors.push(cursor);
-  }
-
-  return ancestors;
-}
-
 function ExplorerTree({
   nodes,
   activeFile,
@@ -593,23 +580,30 @@ export function AppShell() {
   );
   const currentTabName = activeFile ? activeFile.split('/').pop() ?? activeFile : 'No file selected';
   const breadcrumbSegments = activeFile ? activeFile.split('/') : [];
-  const openTabForFile = (filePath: string) => {
+  const openTabForFile = useCallback((filePath: string) => {
     if (!filePath) return;
-    const tabId = crypto.randomUUID();
-    setOpenTabsState((current) => [...current, { id: tabId, filePath }]);
+    setOpenTabsState((current) => {
+      const existing = current.find((tab) => tab.filePath === filePath);
+      if (existing) return current;
+      const tabId = crypto.randomUUID();
+      return [...current, { id: tabId, filePath }];
+    });
     navigate({ to: '/', search: { workspace: workspaceRoot || undefined, file: filePath } });
-  };
+  }, [navigate, workspaceRoot]);
 
-  const closeTab = (tabId: string) => {
-    const nextTabs = openTabsState.filter((tab) => tab.id !== tabId);
-    const closedTab = openTabsState.find((tab) => tab.id === tabId);
-    const nextActiveFile = closedTab && activeFile === closedTab.filePath ? nextTabs[nextTabs.length - 1]?.filePath ?? '' : activeFile;
+  const closeTab = useCallback((tabId: string) => {
+    setOpenTabsState((current) => {
+      const nextTabs = current.filter((tab) => tab.id !== tabId);
+      const closedTab = current.find((tab) => tab.id === tabId);
+      const nextActiveFile = closedTab && activeFile === closedTab.filePath ? nextTabs[nextTabs.length - 1]?.filePath ?? '' : activeFile;
 
-    setOpenTabsState(nextTabs);
-    const nextSearch = { workspace: workspaceRoot || undefined, ...(nextActiveFile ? { file: nextActiveFile } : {}) };
-    navigate({ to: '/', search: nextSearch });
-    void queryClient.invalidateQueries({ queryKey: ['workspace-file'] });
-  };
+      const nextSearch = { workspace: workspaceRoot || undefined, ...(nextActiveFile ? { file: nextActiveFile } : {}) };
+      navigate({ to: '/', search: nextSearch });
+      void queryClient.invalidateQueries({ queryKey: ['workspace-file'] });
+
+      return nextTabs;
+    });
+  }, [activeFile, navigate, queryClient, workspaceRoot]);
   const activeProvider = providerStatuses.find((provider) => provider.enabled && provider.healthy) ?? providerStatuses.find((provider) => provider.enabled);
   const availableModels = activeProvider?.models ?? [];
   const activeModel = availableModels.find((model) => model.modelId === selectedModelId) ?? availableModels[0];
