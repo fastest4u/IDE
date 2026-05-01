@@ -65,7 +65,7 @@ export const registerAIRoutes: FastifyPluginAsync<AIRoutesOptions> = async (app,
   app.get('/ai/agent', { websocket: true }, (socket: WebSocket) => {
     let agentAbort: AbortController | null = null;
 
-    socket.on('message', async (raw) => {
+    socket.on('message', async (raw: WebSocket.RawData) => {
       try {
         const msg = JSON.parse(raw.toString()) as { type: string; id: string; method: string; params: AIRequest };
 
