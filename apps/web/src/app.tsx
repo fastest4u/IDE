@@ -36,7 +36,6 @@ interface ChatMessage {
   toolCalls?: string[];
 }
 
-type ContextField = 'selectedText' | 'activeFile' | 'gitDiff' | 'diagnostics' | 'terminalOutput';
 type WorkspacePresence = 'ready' | 'missing' | 'error';
 
 interface WorkspaceViewState {
@@ -54,6 +53,11 @@ interface EditorState {
   filePath: string;
   draft: string;
   saved: string;
+}
+
+interface OpenTab {
+  id: string;
+  filePath: string;
 }
 
 function useWorkspaceQuery(enabled: boolean) {
@@ -389,6 +393,7 @@ function ExplorerTree({
   workspaceRoot,
   expandedDirectoryIds,
   onToggleDirectory,
+  onOpenFile,
   depth = 0,
 }: {
   nodes: FileTreeNode[];
@@ -396,6 +401,7 @@ function ExplorerTree({
   workspaceRoot?: string;
   expandedDirectoryIds: ReadonlySet<string>;
   onToggleDirectory: (directoryId: string) => void;
+  onOpenFile: (filePath: string) => void;
   depth?: number;
 }) {
   if (!nodes.length) {
@@ -428,6 +434,7 @@ function ExplorerTree({
                   workspaceRoot={workspaceRoot}
                   expandedDirectoryIds={expandedDirectoryIds}
                   onToggleDirectory={onToggleDirectory}
+                  onOpenFile={onOpenFile}
                   depth={depth + 1}
                 />
               )}
@@ -438,15 +445,15 @@ function ExplorerTree({
         const iconDescriptor = getFileIconDescriptor(node.path);
         return (
           <li key={node.id} className="app-shell__tree-item">
-            <Link
-              to="/"
-              search={{ file: node.path, workspace: workspaceRoot || undefined }}
+            <button
+              type="button"
               className={node.path === activeFile ? 'app-shell__tree-file app-shell__tree-file--active' : 'app-shell__tree-file'}
               style={{ ['--tree-depth' as string]: depth } as React.CSSProperties}
+              onClick={() => onOpenFile(node.path)}
             >
               <MaterialItemIcon descriptor={iconDescriptor} className="app-shell__material-icon--tree" />
               <span>{node.name}</span>
-            </Link>
+            </button>
           </li>
         );
       })}
@@ -469,16 +476,19 @@ export function AppShell() {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{ id: 'seed-assistant', role: 'assistant', content: 'Tell me what to inspect, refactor, or patch in this workspace.' }]);
   const [editorSelection, setEditorSelection] = useState<{ text: string; filePath: string } | null>(null);
-  const [enabledContextFields, setEnabledContextFields] = useState<ContextField[]>(['selectedText']);
   const [editorState, setEditorState] = useState<EditorState>({ filePath: '', draft: '', saved: '' });
   const [expandedDirectoryIds, setExpandedDirectoryIds] = useState<Set<string>>(() => new Set([EXPLORER_ROOT_ID]));
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [selectedMode, setSelectedMode] = useState<'Build' | 'Inspect' | 'Patch'>('Inspect');
+  const [selectedReasoningLevel, setSelectedReasoningLevel] = useState<'Default' | 'Low' | 'Medium' | 'High' | 'Max'>('High');
+  const [openTabsState, setOpenTabsState] = useState<OpenTab[]>([]);
   const workspaceSyncRef = useRef<string | null>(null);
 
   const terminalOutput = useTerminalOutput();
 
   const workspaceRoot = workspaceQuery.data?.rootDir || requestedWorkspaceRoot || '';
   const hasWorkspace = hasExplicitWorkspaceSelection && Boolean(workspaceRoot);
-  const activeFile = hasWorkspace ? (search.file ?? workspaceQuery.data?.activeFilePath ?? workspaceQuery.data?.files[0] ?? '') : '';
+  const activeFile = hasWorkspace ? (search.file ?? openTabsState[openTabsState.length - 1]?.filePath ?? '') : '';
   const activeFileRef = useRef(activeFile);
   const workspaceFileQuery = useWorkspaceFileQuery(activeFile);
 
@@ -490,24 +500,6 @@ export function AppShell() {
   useEffect(() => {
     setExpandedDirectoryIds(new Set([EXPLORER_ROOT_ID]));
   }, [workspaceRoot]);
-
-  useEffect(() => {
-    if (!activeFile) return;
-    const ancestorIds = getExplorerAncestorIds(activeFile);
-    setExpandedDirectoryIds((current) => {
-      const next = new Set(current);
-      let changed = false;
-
-      for (const ancestorId of ancestorIds) {
-        if (!next.has(ancestorId)) {
-          next.add(ancestorId);
-          changed = true;
-        }
-      }
-
-      return changed ? next : current;
-    });
-  }, [activeFile]);
 
   useEffect(() => {
     if (!hasExplicitWorkspaceSelection || workspaceQuery.isLoading || workspaceQuery.isError || !workspaceQuery.data) {
@@ -570,6 +562,7 @@ export function AppShell() {
   const patchCards = patchesQuery.data ?? [];
   const providerStatuses = providerStatusQuery.data?.providers ?? [];
   const workspaceFiles = workspaceQuery.data?.files ?? [];
+
   const monacoWorkspaceDocumentsQuery = useMonacoWorkspaceDocumentsQuery(hasWorkspace, workspaceFiles, activeFile);
   const workspaceName = workspaceQuery.data?.name ?? 'workspace';
   const workspacePresence: WorkspacePresence = workspaceQuery.isError ? 'error' : workspaceQuery.data?.ready ? 'ready' : 'missing';
@@ -593,14 +586,42 @@ export function AppShell() {
       },
     ];
   }, [fileTree, visibleWorkspaceName, workspaceFiles.length]);
-  const openTabs = useMemo(() => [...new Set([activeFile, ...workspaceFiles.filter((file) => file !== activeFile).slice(0, 2)].filter(Boolean))], [activeFile, workspaceFiles]);
+
+  const openTabs = useMemo(
+    () => openTabsState.filter((tab) => tab.filePath && workspaceFiles.includes(tab.filePath)),
+    [openTabsState, workspaceFiles],
+  );
   const currentTabName = activeFile ? activeFile.split('/').pop() ?? activeFile : 'No file selected';
   const breadcrumbSegments = activeFile ? activeFile.split('/') : [];
+  const openTabForFile = (filePath: string) => {
+    if (!filePath) return;
+    const tabId = crypto.randomUUID();
+    setOpenTabsState((current) => [...current, { id: tabId, filePath }]);
+    navigate({ to: '/', search: { workspace: workspaceRoot || undefined, file: filePath } });
+  };
+
+  const closeTab = (tabId: string) => {
+    const nextTabs = openTabsState.filter((tab) => tab.id !== tabId);
+    const closedTab = openTabsState.find((tab) => tab.id === tabId);
+    const nextActiveFile = closedTab && activeFile === closedTab.filePath ? nextTabs[nextTabs.length - 1]?.filePath ?? '' : activeFile;
+
+    setOpenTabsState(nextTabs);
+    const nextSearch = { workspace: workspaceRoot || undefined, ...(nextActiveFile ? { file: nextActiveFile } : {}) };
+    navigate({ to: '/', search: nextSearch });
+    void queryClient.invalidateQueries({ queryKey: ['workspace-file'] });
+  };
   const activeProvider = providerStatuses.find((provider) => provider.enabled && provider.healthy) ?? providerStatuses.find((provider) => provider.enabled);
-  const activeModel = activeProvider?.models[0]?.modelId ?? 'No model';
+  const availableModels = activeProvider?.models ?? [];
+  const activeModel = availableModels.find((model) => model.modelId === selectedModelId) ?? availableModels[0];
+  const activeModelId = activeModel?.modelId ?? 'No model';
   const primaryProvider = activeProvider?.providerId ?? 'offline';
-  const selectedContextCount = enabledContextFields.filter((field) => field !== 'selectedText' || Boolean(selectedText)).length;
   const monacoEditorPath = hasWorkspace && activeFile ? getMonacoModelPath(workspaceRoot, activeFile) : 'file:///untitled';
+
+  useEffect(() => {
+    if (!selectedModelId && availableModels.length > 0) {
+      setSelectedModelId(availableModels[0].modelId);
+    }
+  }, [availableModels, selectedModelId]);
 
   useEffect(() => {
     if (!hasWorkspace || !workspaceRoot) {
@@ -630,9 +651,6 @@ export function AppShell() {
     };
   }, [activeFile, hasWorkspace, isDirty, monacoWorkspaceDocumentsQuery.data, workspaceRoot]);
 
-  const toggleContextField = (field: ContextField) => {
-    setEnabledContextFields((current) => current.includes(field) ? current.filter((item) => item !== field) : [...current, field]);
-  };
 
   const handleToggleDirectory = (directoryId: string) => {
     setExpandedDirectoryIds((current) => {
@@ -687,15 +705,7 @@ export function AppShell() {
   const handleSend = async () => {
     const prompt = input.trim();
     if (!prompt) return;
-    const contextLines: string[] = [];
-    if (enabledContextFields.includes('selectedText') && selectedText) contextLines.push(`Context selection:\n${selectedText}`);
-    if (enabledContextFields.includes('activeFile')) contextLines.push(`Active file:\n${activeFilePath}`);
-    if (enabledContextFields.includes('gitDiff') && gitDiff) contextLines.push(`Git diff:\n${gitDiff}`);
-    if (enabledContextFields.includes('diagnostics') && diagnostics.length) contextLines.push(`Diagnostics:\n${diagnostics.map((item) => `${item.source}: ${item.message}`).join('\n')}`);
-    if (enabledContextFields.includes('terminalOutput') && terminalOutput) contextLines.push(`Terminal output:\n${terminalOutput}`);
-    const finalPrompt = contextLines.length ? `${prompt}\n\n${contextLines.join('\n\n')}` : prompt;
-
-    const nextUserMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: finalPrompt };
+    const nextUserMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: prompt };
     setMessages((current) => [...current, nextUserMessage]);
     setInput('');
     setIsStreaming(true);
@@ -710,12 +720,12 @@ export function AppShell() {
         context: {
           workspaceId: 'workspace-local',
           sessionId: 'session-local',
-          activeFilePath: enabledContextFields.includes('activeFile') ? activeFilePath : undefined,
-          selectedText: enabledContextFields.includes('selectedText') ? selectedText : undefined,
+          activeFilePath,
+          selectedText,
           openFiles: workspaceQuery.data?.files.slice(0, 30),
-          gitDiff: enabledContextFields.includes('gitDiff') ? gitDiff : undefined,
-          diagnostics: enabledContextFields.includes('diagnostics') ? diagnostics : undefined,
-          terminalOutput: enabledContextFields.includes('terminalOutput') ? terminalOutput : undefined,
+          gitDiff,
+          diagnostics,
+          terminalOutput,
           repoSummary: workspaceQuery.data?.summary,
         },
         tools: [AI_PATCH_TOOL_SPEC],
@@ -835,6 +845,7 @@ export function AppShell() {
                       workspaceRoot={workspaceRoot}
                       expandedDirectoryIds={expandedDirectoryIds}
                       onToggleDirectory={handleToggleDirectory}
+                      onOpenFile={openTabForFile}
                     />
                   )}
                 </div>
@@ -849,15 +860,26 @@ export function AppShell() {
               <div className="app-shell__editor-chrome">
                 <div className="app-shell__editor-tabs" aria-label="Open tabs">
                   {openTabs.map((tab) => (
-                    <Link
-                      key={tab}
-                      to="/"
-                      search={{ file: tab, workspace: workspaceRoot || undefined }}
-                      className={tab === activeFile ? 'app-shell__editor-tab app-shell__editor-tab--active' : 'app-shell__editor-tab'}
-                    >
-                      <MaterialItemIcon descriptor={getFileIconDescriptor(tab)} className="app-shell__material-icon--tab" />
-                      <span className="app-shell__editor-tab-label">{getBasename(tab)}</span>
-                    </Link>
+                    <div key={tab.id} className={tab.filePath === activeFile ? 'app-shell__editor-tab app-shell__editor-tab--active' : 'app-shell__editor-tab'}>
+                      <button
+                        type="button"
+                        className="app-shell__editor-tab-link"
+                        onClick={() => {
+                          navigate({ to: '/', search: { file: tab.filePath, workspace: workspaceRoot || undefined } });
+                        }}
+                      >
+                        <MaterialItemIcon descriptor={getFileIconDescriptor(tab.filePath)} className="app-shell__material-icon--tab" />
+                        <span className="app-shell__editor-tab-label">{getBasename(tab.filePath)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="app-shell__editor-tab-close"
+                        aria-label={`Close ${getBasename(tab.filePath)}`}
+                        onClick={() => closeTab(tab.id)}
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))}
                   {!openTabs.length && <span className="app-shell__editor-tab app-shell__editor-tab--placeholder">No file</span>}
                 </div>
@@ -865,7 +887,7 @@ export function AppShell() {
                   <span className={isDirty ? 'app-shell__file-status app-shell__file-status--dirty' : 'app-shell__file-status app-shell__file-status--saved'}>{fileStatus}</span>
                   <button type="button" className="app-shell__ghost-button app-shell__ghost-button--quiet" onClick={() => void handleReloadFile()} disabled={!activeFile || workspaceFileQuery.isFetching}>Reload</button>
                   <button type="button" className="app-shell__ghost-button app-shell__ghost-button--quiet" onClick={() => void handleSaveFile()} disabled={!activeFile || !isDirty || saveFileMutation.isPending}>{saveFileMutation.isPending ? 'Saving...' : 'Save'}</button>
-                  {workspaceFiles.includes('apps/web/src/app.tsx') && <button type="button" className="app-shell__ghost-button app-shell__ghost-button--quiet" onClick={() => navigate({ to: '/', search: { file: 'apps/web/src/app.tsx', workspace: workspaceRoot || undefined } })}>Open app.tsx</button>}
+                  {workspaceFiles.includes('apps/web/src/app.tsx') && <button type="button" className="app-shell__ghost-button app-shell__ghost-button--quiet" onClick={() => openTabForFile('apps/web/src/app.tsx')}>Open app.tsx</button>}
                 </div>
               </div>
 
@@ -956,17 +978,19 @@ export function AppShell() {
                   <span className="app-shell__agent-toolbar-label">{patchCards.length} patches</span>
                 </div>
               </div>
-              <div className="app-shell__agent-omnibar">
-                <span className="app-shell__agent-omnibar-icon" />
-                <span className="app-shell__agent-omnibar-file">{currentTabName}</span>
-                <span className="app-shell__agent-omnibar-status">{fileStatus}</span>
+              <div className="app-shell__agent-thread-header">
+                <div>
+                  <span className="app-shell__agent-thread-kicker">{selectedMode}</span>
+                  <strong>{currentTabName}</strong>
+                </div>
+                <span className={isStreaming ? 'app-shell__agent-live app-shell__agent-live--busy' : 'app-shell__agent-live'} aria-label={isStreaming ? 'Agent is thinking' : 'Agent ready'} />
               </div>
               <div className="app-shell__chat-thread">
                 {messages.map((message) => (
                   <article key={message.id} className={message.role === 'user' ? 'app-shell__chat-bubble app-shell__chat-bubble--user' : 'app-shell__chat-bubble'}>
                     <div className="app-shell__chat-bubble-header">
-                      <strong>{message.role}</strong>
-                      {message.role === 'assistant' && message.id !== 'seed-assistant' && <span>{isStreaming && message.content.length === 0 ? 'streaming' : 'ready'}</span>}
+                      <strong>{message.role === 'user' ? 'You' : 'Agent'}</strong>
+                      {message.role === 'assistant' && message.id !== 'seed-assistant' && <span>{isStreaming && message.content.length === 0 ? 'thinking' : 'done'}</span>}
                     </div>
                     <p>{message.content || 'Streaming response...'}</p>
                     {!!message.warnings?.length && (<ul className="app-shell__warning-list">{message.warnings.map((warning) => (<li key={warning}>{warning}</li>))}</ul>)}
@@ -974,19 +998,66 @@ export function AppShell() {
                   </article>
                 ))}
               </div>
-              <form className="app-shell__chat-form app-shell__chat-form--dock" onSubmit={(event) => { event.preventDefault(); void handleSend(); }}>
-                <div className="app-shell__context-menu app-shell__context-menu--inline">
-                  {(['selectedText', 'activeFile', 'gitDiff', 'diagnostics', 'terminalOutput'] as ContextField[]).map((field) => (
-                    <button key={field} type="button" className={enabledContextFields.includes(field) ? 'app-shell__selection-chip app-shell__selection-chip--active' : 'app-shell__selection-chip'} onClick={() => toggleContextField(field)} disabled={field === 'selectedText' && !selectedText}>
-                      {field}
-                    </button>
-                  ))}
+              <form className="app-shell__agent-composer-card" onSubmit={(event) => { event.preventDefault(); void handleSend(); }}>
+                <div className="app-shell__composer-body">
+                  <label className="app-shell__sr-only" htmlFor="agent-message-input">Agent message</label>
+                  <textarea id="agent-message-input" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything..." rows={3} />
+                  <button type="submit" className="app-shell__ghost-button app-shell__agent-send-button" disabled={isStreaming} aria-label="Send to agent">
+                    <span className="app-shell__agent-send-arrow" aria-hidden="true" />
+                  </button>
                 </div>
-                <label className="app-shell__sr-only" htmlFor="agent-message-input">Agent message</label>
-                <textarea id="agent-message-input" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything, @ to mention, / for workflows" rows={4} />
-                <div className="app-shell__chat-form-footer">
-                  <span>{activeProvider?.providerId ?? 'No provider'} · {activeModel} · {selectedContextCount} context</span>
-                  <button type="submit" className="app-shell__ghost-button" disabled={isStreaming}>{isStreaming ? 'Thinking...' : 'Send to agent'}</button>
+                <div className="app-shell__agent-control-strip-row">
+                  <button type="button" className="app-shell__agent-plus-button" aria-label="Add context">+</button>
+                  <div className="app-shell__agent-control-field">
+                    <label className="app-shell__sr-only" htmlFor="mode-select">Select mode</label>
+                    <select
+                      id="mode-select"
+                      className="app-shell__agent-omnibar-select"
+                      value={selectedMode}
+                      onChange={(event) => setSelectedMode(event.target.value as 'Build' | 'Inspect' | 'Patch')}
+                    >
+                      {(['Build', 'Inspect', 'Patch'] as const).map((mode) => (
+                        <option key={mode} value={mode}>
+                          {mode}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="app-shell__agent-control-field app-shell__agent-control-field--wide">
+                    <label className="app-shell__sr-only" htmlFor="model-select">Select model</label>
+                    <select
+                      id="model-select"
+                      className="app-shell__agent-omnibar-select"
+                      value={activeModelId === 'No model' ? '' : activeModelId}
+                      onChange={(event) => setSelectedModelId(event.target.value)}
+                      disabled={availableModels.length === 0}
+                    >
+                      {availableModels.length === 0 ? (
+                        <option value="">No model</option>
+                      ) : (
+                        availableModels.map((model) => (
+                          <option key={model.modelId} value={model.modelId}>
+                            {model.modelId}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                  <div className="app-shell__agent-control-field">
+                    <label className="app-shell__sr-only" htmlFor="reasoning-select">Select reasoning level</label>
+                    <select
+                      id="reasoning-select"
+                      className="app-shell__agent-omnibar-select"
+                      value={selectedReasoningLevel}
+                      onChange={(event) => setSelectedReasoningLevel(event.target.value as 'Default' | 'Low' | 'Medium' | 'High' | 'Max')}
+                    >
+                      {(['Default', 'Low', 'Medium', 'High', 'Max'] as const).map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </form>
             </aside>
@@ -1000,7 +1071,9 @@ export function AppShell() {
             </div>
             <div className="app-shell__statusbar-group">
               <span>{activeProvider?.providerId ?? 'offline'}</span>
-              <span>{activeModel}</span>
+              <span>{activeModelId}</span>
+              <span>{selectedMode}</span>
+              <span>{selectedReasoningLevel}</span>
               <span>{patchCards.length} patches</span>
             </div>
           </footer>
