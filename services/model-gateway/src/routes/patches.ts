@@ -3,9 +3,12 @@ import type { PatchCreateRequest } from '@ide/protocol';
 
 import { PatchServiceError, type PatchService } from '../patches';
 import { WorkspacePathError } from '../workspace-writer';
+import type { TraceService } from '../telemetry/trace-service';
+import type { PatchRecord } from '@ide/protocol';
 
 interface PatchRoutesOptions {
   patchService: PatchService;
+  traceService?: TraceService;
 }
 
 export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async (app, options) => {
@@ -31,6 +34,7 @@ export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async
       }
 
       const patch = await patchService.create(request.body as PatchCreateRequest);
+      logPatchApproval(options.traceService, 'created', patch);
       return reply.code(201).send({ patch });
     } catch (err) {
       return sendPatchError(reply, err);
@@ -46,6 +50,7 @@ export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async
         return reply.code(404).send({ message: 'Patch not found' });
       }
 
+      logPatchApproval(options.traceService, 'approved', patch);
       return { patch };
     } catch (err) {
       return sendPatchError(reply, err);
@@ -61,6 +66,7 @@ export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async
         return reply.code(404).send({ message: 'Patch not found' });
       }
 
+      logPatchApproval(options.traceService, 'rejected', patch);
       return { patch };
     } catch (err) {
       return sendPatchError(reply, err);
@@ -76,6 +82,7 @@ export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async
         return reply.code(404).send({ message: 'Patch not found' });
       }
 
+      logPatchApproval(options.traceService, 'reviewed', patch);
       return { patch };
     } catch (err) {
       return sendPatchError(reply, err);
@@ -91,6 +98,7 @@ export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async
         return reply.code(404).send({ message: 'Patch not found' });
       }
 
+      logPatchApproval(options.traceService, 'applied', patch);
       return { patch };
     } catch (err) {
       return sendPatchError(reply, err);
@@ -106,12 +114,28 @@ export const registerPatchRoutes: FastifyPluginAsync<PatchRoutesOptions> = async
         return reply.code(404).send({ message: 'Patch not found' });
       }
 
+      logPatchApproval(options.traceService, 'rolled_back', patch);
       return { patch };
     } catch (err) {
       return sendPatchError(reply, err);
     }
   });
 };
+
+function logPatchApproval(
+  traceService: TraceService | undefined,
+  action: string,
+  patch: PatchRecord,
+) {
+  traceService?.logApproval(patch.sessionId ?? 'approval-queue', 'approval', {
+    action,
+    patchId: patch.id,
+    title: patch.title,
+    status: patch.status,
+    files: patch.operations.map((operation) => operation.filePath),
+    reviewStatus: patch.review?.status,
+  });
+}
 
 function sendPatchError(
   reply: FastifyReply,

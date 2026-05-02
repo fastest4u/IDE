@@ -55,4 +55,4 @@ The web client is the primary working shell for the AI-first IDE today.
 
 1. The shell requires explicit workspace selection every fresh launch/reload.
 2. The gateway still serves one mutable workspace root per process, so the shell is effectively single-workspace per running gateway instance.
-3. Provider/runtime settings APIs exist, but the current shell does not expose a dedicated settings panel.
+3. Provider/runtime settings are accessible through the agent manager modal (`ProviderSettings.tsx`), but there is no standalone dedicated settings page.

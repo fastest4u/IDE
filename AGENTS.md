@@ -13,7 +13,7 @@
 - Root orchestration scripts are `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm test`, and `pnpm typecheck`; each delegates to Turbo.
 - Web dev: `pnpm dev:web` or `pnpm exec vite apps/web --config apps/web/vite.config.ts --host 0.0.0.0 --port 5173`; Vite serves `0.0.0.0:5173`.
 - Web build: `pnpm build:web` or `pnpm exec vite build apps/web --config apps/web/vite.config.ts`.
-- Model gateway dev: `pnpm dev:model-gateway` or `pnpm --dir services/model-gateway dev`; Fastify listens on `0.0.0.0:3001` by default.
+- Model gateway dev: `pnpm dev:model-gateway` or `pnpm --dir services/model-gateway dev`; Fastify listens on `127.0.0.1:3001` by default.
 - Model gateway checks: `pnpm typecheck:model-gateway`, `pnpm build:model-gateway`, and `pnpm test:model-gateway`.
 - Focused typechecks in root scripts are `pnpm typecheck:apps`, `pnpm typecheck:packages`, and `pnpm typecheck:services`.
 - Be careful with package-name Turbo filters such as `@ide/desktop`, `@ide/api`, and `@ide/worker`; those dirs currently lack package manifests.
@@ -21,21 +21,21 @@
 - No repo-local CI, pre-commit, ESLint, Prettier, Vitest, or codegen config is present; do not invent extra validation workflows without adding config.
 
 ## Architecture Boundaries
-- Workspace globs are `apps/*`, `packages/*`, and `services/*`.
+- Workspace globs in `pnpm-workspace.yaml` are `packages/*` and `services/*`; `apps/*` directories are not workspace packages and depend on root-level dependencies.
 - Apps and services may depend on `packages/*`; `packages/*` must not depend on `apps/*`.
 - Keep `packages/ai-core` provider-agnostic and UI-free; provider-specific routing/adapters belong in `services/model-gateway`.
 - Keep `packages/workspace-core` independent of UI framework details and `packages/runtime-core` independent of client platform details.
-- Cross-boundary contracts belong in `packages/protocol`, split across `ai.ts`, `provider.ts`, and `validation.ts` with `index.ts` as the barrel export.
+- Cross-boundary contracts belong in `packages/protocol`, split across `ai.ts`, `provider.ts`, `validation.ts`, `memory.ts`, `patch.ts`, `collaboration.ts`, and `settings.ts` with `index.ts` as the barrel export.
 - Use the shared root `@ide/*` path aliases from `tsconfig.base.json`; prefer named exports.
 
 ## Current Entrypoints
 - Web boot flow is `apps/web/index.html` -> `apps/web/src/main.tsx` -> `AppShell` in `apps/web/src/app.tsx`.
-- The web app uses a single root `QueryClient` and TanStack Router with `createMemoryHistory` in `main.tsx`.
+- The web app uses a single root `QueryClient` and TanStack Router with `createBrowserHistory` in `main.tsx`.
 - On a fresh web load/reload, `AppShell` shows `WorkspaceSelector` first and only loads workspace queries after the user picks a `workspace` search param.
 - The current web shell is VS Code-like: activity rail + explorer on the left, Monaco editor in the center, agent/chat panel on the right, and a terminal dock that lives inside the editor column.
 - Web AI transport is isolated in `apps/web/src/services/model-gateway.ts` and currently hardcodes `http://127.0.0.1:3001`.
 - `services/model-gateway/src/server.ts` is the Fastify gateway source for AI and patch routes; routes live under `services/model-gateway/src/routes/`.
-- Gateway endpoints in source are `POST /ai/generate`, `POST /ai/stream`, `POST /ai/collaborate`, `POST /ai/embed`, `POST /ai/rerank`, `GET /health`, workspace routes under `/workspace`, settings routes under `/settings`, patch routes under `/patches`, session routes under `/sessions`, and terminal routes under `/terminal`.
+- Gateway endpoints in source are `POST /ai/generate`, `POST /ai/stream`, `POST /ai/collaborate`, `POST /ai/embed`, `POST /ai/rerank`, `GET /health`, workspace routes under `/workspace`, settings routes under `/settings`, patch routes under `/patches`, session routes under `/sessions`, terminal routes under `/terminal`, agent routes under `/agents`, workflow routes under `/workflows`, trace routes under `/trace`, and memory routes under `/memory`.
 - Provider configs are loaded via `ProviderConnectionConfig[]`; each config specifies `providerId`, `baseUrl`, `apiKeyEnv`, `models`, and `timeoutMs`.
 - Adapters: `OpenAICompatibleAdapter` (works with OpenAI/DeepSeek/vLLM/Ollama endpoints), `OllamaAdapter` (native Ollama API), `AnthropicAdapter` (placeholder).
 - `createModelGatewayServer(options)` returns `{ app, controller, router }`; pass `providerConfigs` to register providers at startup.

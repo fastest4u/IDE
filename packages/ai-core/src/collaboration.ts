@@ -7,6 +7,7 @@ import type {
   CollaborationRole,
   CollaborationRoleOutput,
   CollaborationRoleSpec,
+  CollaborationTeamResolution,
   ContextPacket,
   ModelTier,
   RoutingStrategy,
@@ -21,6 +22,14 @@ export const DEFAULT_COLLABORATION_ROLES: CollaborationRole[] = [
   'verifier',
   'synthesizer',
 ];
+
+const TEAM_ROLES: Record<CollaborationTeamResolution['teamId'], CollaborationRole[]> = {
+  coding_team: ['planner', 'context_curator', 'coder', 'reviewer', 'verifier', 'synthesizer'],
+  research_assistant: ['planner', 'context_curator', 'reviewer', 'synthesizer'],
+  review_team: ['context_curator', 'reviewer', 'verifier', 'synthesizer'],
+  planning_team: ['planner', 'context_curator', 'synthesizer'],
+  tool_execution_team: ['planner', 'context_curator', 'coder', 'verifier', 'synthesizer'],
+};
 
 interface RoleDefinition {
   objective: string;
@@ -68,9 +77,18 @@ const ROLE_DEFINITIONS: Record<CollaborationRole, RoleDefinition> = {
   },
 };
 
+const ROLE_DEPENDENCIES: Record<CollaborationRole, CollaborationRole[]> = {
+  planner: [],
+  context_curator: [],
+  coder: ['planner', 'context_curator'],
+  reviewer: ['coder'],
+  verifier: ['coder'],
+  synthesizer: ['reviewer', 'verifier'],
+};
+
 export class RoleOrchestrationService {
   buildRolePlan(request: CollaborationRequest): CollaborationRoleSpec[] {
-    const roles = this.normalizeRoles(request.roles);
+    const roles = this.resolveTeam(request).roles;
     return roles.map((role) => {
       const definition = ROLE_DEFINITIONS[role];
       return {
@@ -82,6 +100,102 @@ export class RoleOrchestrationService {
         strategy: this.strategyForRole(request.strategy, role),
       };
     });
+  }
+
+  resolveTeam(request: CollaborationRequest): CollaborationTeamResolution {
+    if (request.roles?.length) {
+      return {
+        teamId: 'coding_team',
+        roles: this.normalizeRoles(request.roles),
+        reason: 'Explicit roles were supplied by the request.',
+        autoSelected: false,
+      };
+    }
+
+    const requestedTeam = request.team && request.team !== 'auto' ? request.team : undefined;
+    if (requestedTeam && requestedTeam in TEAM_ROLES) {
+      return {
+        teamId: requestedTeam,
+        roles: this.normalizeRoles(TEAM_ROLES[requestedTeam]),
+        reason: `Request selected ${requestedTeam}.`,
+        autoSelected: false,
+      };
+    }
+
+    const goal = request.goal.toLowerCase();
+    const metadata = request.context.metadata ?? {};
+    const workflow = stringFromMetadata(metadata.requestedWorkflow).toLowerCase();
+    const text = `${goal} ${workflow}`;
+
+    if (hasAny(text, ['research', 'ค้น', 'หา source', 'source', 'summarize', 'สรุป', 'document', 'docs'])) {
+      return {
+        teamId: 'research_assistant',
+        roles: this.normalizeRoles(TEAM_ROLES.research_assistant),
+        reason: 'Research or documentation intent detected.',
+        autoSelected: true,
+      };
+    }
+
+    if (hasAny(text, ['review', 'audit', 'ตรวจ', 'bug', 'risk', 'security', 'validate', 'verify'])) {
+      return {
+        teamId: 'review_team',
+        roles: this.normalizeRoles(TEAM_ROLES.review_team),
+        reason: 'Review, validation, or safety intent detected.',
+        autoSelected: true,
+      };
+    }
+
+    if (hasAny(text, ['plan', 'roadmap', 'ออกแบบ', 'architecture', 'แนวทาง', 'spec'])) {
+      return {
+        teamId: 'planning_team',
+        roles: this.normalizeRoles(TEAM_ROLES.planning_team),
+        reason: 'Planning or architecture intent detected.',
+        autoSelected: true,
+      };
+    }
+
+    if (hasAny(text, ['tool', 'api', 'shell', 'command', 'database', 'deploy', 'run', 'execute'])) {
+      return {
+        teamId: 'tool_execution_team',
+        roles: this.normalizeRoles(TEAM_ROLES.tool_execution_team),
+        reason: 'Tool execution or integration intent detected.',
+        autoSelected: true,
+      };
+    }
+
+    return {
+      teamId: 'coding_team',
+      roles: this.normalizeRoles(TEAM_ROLES.coding_team),
+      reason: 'Default AI coding team selected for a general IDE task.',
+      autoSelected: true,
+    };
+  }
+
+  buildExecutionWaves(rolePlan: CollaborationRoleSpec[]): CollaborationRoleSpec[][] {
+    const pending = [...rolePlan];
+    const completed = new Set<CollaborationRole>();
+    const availableRoles = new Set(rolePlan.map((spec) => spec.role));
+    const waves: CollaborationRoleSpec[][] = [];
+
+    while (pending.length > 0) {
+      const runnable = pending.filter((spec) => {
+        const dependencies = ROLE_DEPENDENCIES[spec.role].filter((role) => availableRoles.has(role));
+        return dependencies.every((role) => completed.has(role));
+      });
+
+      if (runnable.length === 0) {
+        waves.push([...pending]);
+        break;
+      }
+
+      waves.push(runnable);
+      for (const spec of runnable) {
+        completed.add(spec.role);
+        pending.splice(pending.findIndex((candidate) => candidate.role === spec.role), 1);
+      }
+    }
+
+    return waves;
   }
 
   buildRoleRequest(input: {
@@ -136,6 +250,10 @@ export class RoleOrchestrationService {
       role: input.roleSpec.role,
       kind: input.roleSpec.expectedOutput,
       status: 'completed',
+      workflowNodeId: input.roleSpec.workflowNodeId,
+      workflowNodeLabel: input.roleSpec.workflowNodeLabel,
+      specialistAgentId: input.roleSpec.specialistAgentId,
+      specialistAgentName: input.roleSpec.specialistAgentName,
       summary: summarizeRoleContent(content),
       content,
       artifacts: extractArtifacts(input.roleSpec.role, content),
@@ -162,6 +280,10 @@ export class RoleOrchestrationService {
       role: input.roleSpec.role,
       kind: input.roleSpec.expectedOutput,
       status: 'failed',
+      workflowNodeId: input.roleSpec.workflowNodeId,
+      workflowNodeLabel: input.roleSpec.workflowNodeLabel,
+      specialistAgentId: input.roleSpec.specialistAgentId,
+      specialistAgentName: input.roleSpec.specialistAgentName,
       summary: `Role failed: ${message}`,
       content: message,
       artifacts: [],
@@ -191,6 +313,12 @@ export class RoleOrchestrationService {
 
     return [
       `You are the ${labelRole(input.roleSpec.role)} role in a multi-model IDE workflow.`,
+      input.roleSpec.workflowNodeId
+        ? `Workflow node: ${input.roleSpec.workflowNodeLabel ?? input.roleSpec.workflowNodeId} (${input.roleSpec.workflowNodeId}).`
+        : undefined,
+      input.roleSpec.specialistAgentName
+        ? `Assigned specialist agent: ${input.roleSpec.specialistAgentName} (${input.roleSpec.specialistAgentId}).`
+        : undefined,
       `Task goal: ${input.collaboration.goal}`,
       `Role objective: ${input.roleSpec.objective}`,
       `Expected output kind: ${input.roleSpec.expectedOutput}`,
@@ -208,7 +336,7 @@ export class RoleOrchestrationService {
       '- Risks and validation',
       '',
       'Do not claim files were changed unless a patch operation was actually applied by the IDE.',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 
   private normalizeRoles(roles?: CollaborationRole[]): CollaborationRole[] {
@@ -302,6 +430,14 @@ function formatContextPacket(packet: ContextPacket): string {
   }
 
   return lines.join('\n');
+}
+
+function hasAny(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function stringFromMetadata(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function summarizeRoleContent(content: string): string {

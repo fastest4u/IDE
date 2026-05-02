@@ -55,15 +55,43 @@ aliases:
 | Web boot | `apps/web/src/main.tsx` |
 | IDE shell | `apps/web/src/app.tsx` |
 | Workspace selector | `apps/web/src/components/workspace-selector.tsx` |
+| Provider settings UI | `apps/web/src/components/ProviderSettings.tsx` |
 | Web terminal | `apps/web/src/components/terminal.tsx` |
 | Web gateway client | `apps/web/src/services/model-gateway.ts` |
 | AI contracts | `packages/protocol/src/ai.ts` |
 | Provider adapter contract | `packages/protocol/src/provider.ts` |
+| Memory contracts | `packages/protocol/src/memory.ts` |
+| Patch contracts | `packages/protocol/src/patch.ts` |
+| Collaboration contracts | `packages/protocol/src/collaboration.ts` |
+| Settings contracts | `packages/protocol/src/settings.ts` |
+| Context builder | `packages/ai-core/src/context-builder.ts` |
+| Role orchestration | `packages/ai-core/src/collaboration.ts` |
+| Agent loader | `packages/ai-core/src/agent-loader.ts` |
+| Compaction service | `packages/ai-core/src/compaction.ts` |
+| Workspace index | `packages/workspace-core/src/workspace-index.ts` |
+| Project detector | `packages/workspace-core/src/project-detector.ts` |
+| Obsidian KB | `packages/workspace-core/src/obsidian-kb.ts` |
 | Gateway server runtime | `services/model-gateway/src/server.ts` |
+| AI controller | `services/model-gateway/src/controller.ts` |
 | Router engine | `services/model-gateway/src/router/ai-router.ts` |
 | Policy engine | `services/model-gateway/src/router/policy-engine.ts` |
 | Health service | `services/model-gateway/src/health/health-check.ts` |
 | Circuit breaker | `services/model-gateway/src/health/circuit-breaker.ts` |
+| OpenAI-compatible adapter | `services/model-gateway/src/adapters/openai-compatible-adapter.ts` |
+| Ollama adapter | `services/model-gateway/src/adapters/ollama-adapter.ts` |
+| Patch service | `services/model-gateway/src/patches.ts` |
+| Workspace writer | `services/model-gateway/src/workspace-writer.ts` |
+| Workspace context | `services/model-gateway/src/memory/workspace-context.ts` |
+| Session store | `services/model-gateway/src/memory/session-store.ts` |
+| Settings service | `services/model-gateway/src/settings.ts` |
+| Terminal service | `services/model-gateway/src/terminal/terminal-session.ts` |
+| Workspace picker | `services/model-gateway/src/workspace-picker.ts` |
+| Audit log | `services/model-gateway/src/telemetry/audit-log.ts` |
+| Trace service | `services/model-gateway/src/telemetry/trace-service.ts` |
+| Plugin hooks | `services/model-gateway/src/plugin-hooks.ts` |
+| Origin guard | `services/model-gateway/src/security/request-guard.ts` |
+| Prompt injection guard | `services/model-gateway/src/safety/prompt-injection.ts` |
+| Secret redactor | `services/model-gateway/src/safety/secret-redaction.ts` |
 
 ## Next Architecture Work
 
