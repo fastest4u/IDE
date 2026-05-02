@@ -15,3 +15,16 @@ export {
   type RepoContext,
   type WorkspaceContextProvider,
 } from './repo-summary';
+
+export {
+  ProjectDetector,
+  type ProjectInfo,
+  type ProjectDetectorOptions,
+} from './project-detector';
+
+export {
+  ObsidianKnowledgeBase,
+  type ObsidianNote,
+  type ObsidianKBQuery,
+  type ObsidianKBOptions,
+} from './obsidian-kb';

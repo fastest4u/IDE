@@ -62,6 +62,7 @@ export interface ContextPacket {
   constraints: string[];
   patchHistory: PatchMemory[];
   handoffSummary: string;
+  knowledgeContext?: string;
   repoSummary?: string;
   workspaceFiles?: string[];
   workspaceContext?: string;
@@ -90,6 +91,7 @@ export interface ContextBuilder {
   buildPromptWithContext(
     originalPrompt: string,
     packet: ContextPacket,
+    options?: { instructions?: string; agentPrompt?: string; workspaceRoot?: string; modelId?: string },
   ): string;
 }
 

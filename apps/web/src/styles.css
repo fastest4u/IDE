@@ -118,6 +118,18 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.app-shell__window-link--button {
+  border: 0;
+  background: transparent;
+  padding: 0.15rem 0.3rem;
+  cursor: pointer;
+}
+
+.app-shell__window-link--button:hover {
+  color: #ffffff;
+  background: #2a2a2a;
+}
+
 .app-shell__status-dot {
   width: 0.45rem;
   height: 0.45rem;
@@ -822,6 +834,899 @@ a:focus-visible {
   background: #181818;
   box-shadow: 0 1.4rem 3.5rem rgba(0, 0, 0, 0.42);
   overflow: hidden;
+}
+
+.app-shell__agent-manager-modal {
+  width: min(72rem, calc(100vw - 5rem));
+  max-height: min(50rem, calc(100dvh - 6rem));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border: 1px solid #303030;
+  background: #171717;
+  box-shadow: 0 1.4rem 3.5rem rgba(0, 0, 0, 0.46);
+  overflow: hidden;
+}
+
+.app-shell__agent-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1rem 0.8rem;
+  border-bottom: 1px solid #2b2b2b;
+  background: #1d1d1d;
+}
+
+.app-shell__agent-manager-header div {
+  min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.app-shell__agent-manager-header h2,
+.app-shell__manager-panel h3 {
+  margin: 0;
+  color: #f0f0f0;
+  font-weight: 500;
+}
+
+.app-shell__agent-manager-header h2 {
+  font-size: 1.05rem;
+}
+
+.app-shell__agent-manager-header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #8f8f8f;
+  font-size: 0.76rem;
+}
+
+.app-shell__agent-manager-tabs {
+  display: flex;
+  gap: 0.2rem;
+  padding: 0.45rem 0.65rem 0;
+  border-bottom: 1px solid #2a2a2a;
+  background: #191919;
+  overflow-x: auto;
+}
+
+.app-shell__agent-manager-tab {
+  height: 2rem;
+  flex: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #a0a0a0;
+  padding: 0 0.65rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.app-shell__agent-manager-tab:hover,
+.app-shell__agent-manager-tab--active {
+  color: #ffffff;
+}
+
+.app-shell__agent-manager-tab--active {
+  border-bottom-color: var(--accent);
+}
+
+.app-shell__agent-manager-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.app-shell__agent-dashboard,
+.app-shell__manager-grid,
+.app-shell__manager-split,
+.app-shell__manager-panel,
+.app-shell__agent-runner,
+.app-shell__runtime-list,
+.app-shell__tool-matrix,
+.app-shell__workflow-waves,
+.app-shell__role-output-list,
+.app-shell__trace-list,
+.app-shell__approval-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.app-shell__metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.app-shell__metric-grid--compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.app-shell__metric-grid--compact article {
+  padding: 0.6rem;
+}
+
+.app-shell__metric-grid--compact strong {
+  font-size: 1rem;
+}
+
+.app-shell__metric-grid article,
+.app-shell__manager-panel,
+.app-shell__runtime-row,
+.app-shell__workflow-waves article,
+.app-shell__role-output-list article,
+.app-shell__trace-list article,
+.app-shell__approval-list article,
+.app-shell__collaboration-result {
+  border: 1px solid #303030;
+  background: #202020;
+}
+
+.app-shell__metric-grid article {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.85rem;
+}
+
+.app-shell__metric-grid strong {
+  color: #f4f4f4;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.app-shell__metric-grid span,
+.app-shell__manager-panel p,
+.app-shell__runtime-row span,
+.app-shell__workflow-waves span,
+.app-shell__role-output-list span,
+.app-shell__trace-list span,
+.app-shell__approval-list span,
+.app-shell__manager-panel label {
+  color: #929292;
+  font-size: 0.76rem;
+}
+
+.app-shell__manager-split,
+.app-shell__manager-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.app-shell__manager-grid--wide-left {
+  grid-template-columns: minmax(20rem, 1.1fr) minmax(16rem, 0.9fr);
+}
+
+.app-shell__manager-panel {
+  align-content: start;
+  padding: 0.9rem;
+}
+
+.app-shell__manager-panel h3 {
+  font-size: 0.88rem;
+}
+
+.app-shell__manager-panel input,
+.app-shell__manager-panel textarea,
+.app-shell__agent-runner textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #303030;
+  background: #151515;
+  color: #d8d8d8;
+  padding: 0.58rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.app-shell__agent-runner textarea {
+  resize: vertical;
+  min-height: 5.5rem;
+}
+
+.app-shell__manager-error {
+  border: 1px solid rgba(244, 135, 113, 0.35);
+  background: rgba(244, 135, 113, 0.08);
+  color: var(--danger);
+  padding: 0.6rem;
+  font-size: 0.78rem;
+}
+
+.app-shell__collaboration-result {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.7rem;
+}
+
+.app-shell__collaboration-result p,
+.app-shell__manager-panel p,
+.app-shell__role-output-list p,
+.app-shell__approval-list p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.app-shell__runtime-row,
+.app-shell__role-output-list article,
+.app-shell__trace-list article,
+.app-shell__approval-list article {
+  display: grid;
+  gap: 0.28rem;
+  padding: 0.65rem;
+}
+
+button.app-shell__runtime-row {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell__approval-row-head,
+.app-shell__approval-meta,
+.app-shell__approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.app-shell__approval-row-head {
+  justify-content: space-between;
+}
+
+.app-shell__approval-meta span {
+  border: 1px solid #343434;
+  background: #151515;
+  color: #929292;
+  padding: 0.12rem 0.4rem;
+  font-size: 0.68rem;
+}
+
+.app-shell__approval-actions {
+  padding-top: 0.2rem;
+}
+
+.app-shell__memory-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.app-shell__memory-search input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #303030;
+  background: #151515;
+  color: #d8d8d8;
+  padding: 0 0.65rem;
+  font-size: 0.8rem;
+}
+
+.app-shell__memory-results {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.app-shell__memory-results article {
+  display: grid;
+  gap: 0.22rem;
+  border: 1px solid #303030;
+  background: #181818;
+  padding: 0.65rem;
+}
+
+.app-shell__memory-results strong {
+  color: #e8e8e8;
+  font-size: 0.82rem;
+}
+
+.app-shell__memory-results span {
+  color: #929292;
+  font-size: 0.7rem;
+}
+
+.app-shell__memory-results p {
+  margin: 0;
+  color: #bdbdbd;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.app-shell__runtime-row--active {
+  border-color: rgba(137, 209, 133, 0.38);
+}
+
+.app-shell__runtime-row strong,
+.app-shell__workflow-waves strong,
+.app-shell__role-output-list strong,
+.app-shell__trace-list strong,
+.app-shell__approval-list strong {
+  color: #e8e8e8;
+  font-size: 0.82rem;
+}
+
+.app-shell__tool-matrix {
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+}
+
+.app-shell__tool-matrix article {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0.35rem;
+  padding: 0.65rem;
+  border: 1px solid #303030;
+  background: #181818;
+}
+
+.app-shell__tool-matrix strong {
+  width: 100%;
+  color: #eeeeee;
+}
+
+.app-shell__permission-pill {
+  border: 1px solid #353535;
+  background: #222222;
+  color: #b5b5b5;
+  padding: 0.14rem 0.4rem;
+  font-size: 0.68rem;
+}
+
+.app-shell__permission-pill--allow { color: #89d185; }
+.app-shell__permission-pill--ask { color: var(--warning); }
+.app-shell__permission-pill--deny { color: var(--danger); }
+
+.app-shell__workflow-waves {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.app-shell__workflow-list,
+.app-shell__workflow-role-picker {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.app-shell__workflow-role-picker {
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+}
+
+.app-shell__workflow-role {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #303030;
+  background: #181818;
+  padding: 0.52rem 0.58rem;
+  color: #cfcfcf;
+}
+
+.app-shell__workflow-role input {
+  width: auto;
+}
+
+.app-shell__workflow-role--active {
+  border-color: rgba(137, 209, 133, 0.38);
+  background: rgba(137, 209, 133, 0.08);
+}
+
+.app-shell__workflow-field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.app-shell__workflow-field-row label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.app-shell__workflow-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #303030;
+  background: #171717;
+  padding: 0.5rem;
+}
+
+.app-shell__workflow-graph-toolbar span {
+  color: #a7a7a7;
+  font-size: 0.72rem;
+  margin-right: auto;
+}
+
+.app-shell__workflow-graph-toolbar button {
+  border: 1px solid #373737;
+  background: #222222;
+  color: #d8d8d8;
+  padding: 0.28rem 0.5rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.app-shell__workflow-graph {
+  position: relative;
+  overflow: auto;
+  border: 1px solid #303030;
+  background:
+    linear-gradient(#232323 1px, transparent 1px),
+    linear-gradient(90deg, #232323 1px, transparent 1px),
+    #151515;
+  background-size: 24px 24px;
+}
+
+.app-shell__workflow-graph-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.app-shell__workflow-graph-lines path {
+  fill: none;
+  stroke: rgba(137, 209, 133, 0.46);
+  stroke-width: 2;
+}
+
+.app-shell__workflow-node {
+  position: absolute;
+  display: grid;
+  gap: 0.28rem;
+  width: 132px;
+  min-height: 60px;
+  border: 1px solid #3b3b3b;
+  background: #202020;
+  padding: 0.48rem;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.app-shell__workflow-node strong {
+  color: #f0f0f0;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.app-shell__workflow-node span {
+  color: #929292;
+  font-size: 0.66rem;
+}
+
+.app-shell__workflow-node select {
+  min-height: 1.65rem;
+  font-size: 0.68rem;
+  padding: 0.18rem 0.28rem;
+  cursor: pointer;
+}
+
+.app-shell__workflow-node--approval {
+  border-color: rgba(245, 197, 66, 0.48);
+  background: rgba(245, 197, 66, 0.09);
+}
+
+.app-shell__workflow-node--synthesizer {
+  border-color: rgba(86, 156, 214, 0.5);
+}
+
+.app-shell__workflow-node--condition {
+  border-color: rgba(206, 145, 250, 0.5);
+  background: rgba(206, 145, 250, 0.08);
+}
+
+.app-shell__workflow-node--retry {
+  border-color: rgba(245, 197, 66, 0.36);
+  background: rgba(245, 197, 66, 0.06);
+}
+
+.app-shell__workflow-node--start,
+.app-shell__workflow-node--end {
+  border-color: rgba(137, 209, 133, 0.3);
+  background: rgba(137, 209, 133, 0.06);
+  min-height: 40px;
+}
+
+/* ─── Add-node toolbar ──────────────────────────────── */
+
+.app-shell__workflow-add-nodes {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.app-shell__workflow-add-btn {
+  border: 1px solid #3a3a3a;
+  background: #252525;
+  color: #c8c8c8;
+  padding: 0.2rem 0.48rem;
+  font-size: 0.66rem;
+  cursor: pointer;
+  text-transform: capitalize;
+  transition: background 100ms ease;
+}
+
+.app-shell__workflow-add-btn:hover {
+  background: #333333;
+  color: #ffffff;
+}
+
+/* ─── Port circles ──────────────────────────────────── */
+
+.app-shell__workflow-port {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #555555;
+  border: 2px solid #303030;
+  cursor: crosshair;
+  z-index: 3;
+  transition: background 100ms ease, transform 100ms ease;
+}
+
+.app-shell__workflow-port:hover {
+  background: #89d185;
+  transform: scale(1.3);
+}
+
+.app-shell__workflow-port--in {
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.app-shell__workflow-port--in:hover {
+  transform: translateY(-50%) scale(1.3);
+}
+
+.app-shell__workflow-port--out {
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.app-shell__workflow-port--out:hover {
+  transform: translateY(-50%) scale(1.3);
+}
+
+/* ─── Node delete button ────────────────────────────── */
+
+.app-shell__workflow-node-delete {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #555;
+  border-radius: 50%;
+  background: #333;
+  color: #ccc;
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  z-index: 4;
+}
+
+.app-shell__workflow-node:hover .app-shell__workflow-node-delete {
+  opacity: 1;
+}
+
+.app-shell__workflow-node-delete:hover {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+/* ─── Node type label ───────────────────────────────── */
+
+.app-shell__workflow-node-type {
+  color: #929292;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Connecting mode ───────────────────────────────── */
+
+.app-shell__workflow-graph--connecting {
+  cursor: crosshair;
+}
+
+.app-shell__workflow-node--connectable {
+  cursor: pointer;
+}
+
+.app-shell__workflow-node--connectable:hover {
+  outline: 2px solid rgba(137, 209, 133, 0.5);
+  outline-offset: 2px;
+}
+
+/* ─── Connect hint bar ──────────────────────────────── */
+
+.app-shell__workflow-connect-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(137, 209, 133, 0.08);
+  border: 1px solid rgba(137, 209, 133, 0.25);
+  color: #c8c8c8;
+  font-size: 0.74rem;
+}
+
+.app-shell__workflow-connect-hint button {
+  border: 1px solid #444;
+  background: #2a2a2a;
+  color: #d0d0d0;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+/* ─── Edge styles ───────────────────────────────────── */
+
+.app-shell__workflow-graph-lines path {
+  pointer-events: auto;
+}
+
+.app-shell__workflow-edge--selected {
+  stroke: #89d185 !important;
+  stroke-width: 3;
+}
+
+.app-shell__workflow-edge-delete-btn {
+  background: rgba(244, 135, 113, 0.12) !important;
+  border-color: rgba(244, 135, 113, 0.35) !important;
+  color: var(--danger) !important;
+}
+
+.app-shell__workflow-edge-label {
+  fill: #c8c8c8;
+  font-size: 11px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+/* ─── Condition node config ─────────────────────────── */
+
+.app-shell__workflow-node-config-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #404040;
+  background: #181818;
+  color: #d8d8d8;
+  padding: 0.2rem 0.35rem;
+  font-size: 0.62rem;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ─── Retry badge ───────────────────────────────────── */
+
+.app-shell__workflow-node-badge {
+  border: 1px solid rgba(245, 197, 66, 0.3);
+  background: rgba(245, 197, 66, 0.08);
+  color: var(--warning);
+  padding: 0.1rem 0.3rem;
+  font-size: 0.6rem;
+  width: fit-content;
+}
+
+/* ─── Runtime status node modifiers ─────────────── */
+.app-shell__workflow-node--status-running {
+  border-color: #4fc3f7 !important;
+  box-shadow: 0 0 12px rgba(79, 195, 247, 0.35);
+  animation: wf-node-pulse 1.5s ease-in-out infinite;
+}
+.app-shell__workflow-node--status-completed {
+  border-color: #4caf50 !important;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.25);
+}
+.app-shell__workflow-node--status-failed {
+  border-color: #f44336 !important;
+  box-shadow: 0 0 10px rgba(244, 67, 54, 0.3);
+}
+.app-shell__workflow-node--status-skipped {
+  opacity: 0.5;
+  border-style: dashed !important;
+}
+.app-shell__workflow-node--status-waiting_approval {
+  border-color: #ff9800 !important;
+  box-shadow: 0 0 14px rgba(255, 152, 0, 0.4);
+  animation: wf-node-pulse 1.2s ease-in-out infinite;
+}
+.app-shell__workflow-node--status-approved {
+  border-color: #4caf50 !important;
+}
+.app-shell__workflow-node--status-rejected {
+  border-color: #f44336 !important;
+  opacity: 0.7;
+}
+.app-shell__workflow-node--status-retrying {
+  border-color: #ffc107 !important;
+  box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
+  animation: wf-node-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes wf-node-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.15); }
+}
+
+/* ─── Status badge ──────────────────────────────── */
+.app-shell__workflow-status-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  font-size: 0.75rem;
+  line-height: 1;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* ─── Failure policy dropdown ───────────────────── */
+.app-shell__workflow-node-policy {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #ccc;
+  font-size: 0.6rem;
+  padding: 0.1rem 0.2rem;
+  border-radius: 3px;
+  width: 100%;
+  cursor: pointer;
+}
+.app-shell__workflow-node-policy:hover {
+  border-color: #555;
+}
+
+/* ─── Inline approval actions ───────────────────── */
+.app-shell__workflow-node-approval-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+.app-shell__workflow-node-approval-btn {
+  flex: 1;
+  font-size: 0.6rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+  background: #1a1a1a;
+  color: #ccc;
+  transition: all 0.15s ease;
+}
+.app-shell__workflow-node-approval-btn--approve:hover {
+  background: rgba(76, 175, 80, 0.2);
+  border-color: #4caf50;
+  color: #4caf50;
+}
+.app-shell__workflow-node-approval-btn--reject:hover {
+  background: rgba(244, 67, 54, 0.2);
+  border-color: #f44336;
+  color: #f44336;
+}
+
+/* ─── Version badge ─────────────────────────────── */
+.app-shell__workflow-version-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(79, 195, 247, 0.15);
+  border: 1px solid rgba(79, 195, 247, 0.3);
+  color: #4fc3f7;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  z-index: 5;
+  letter-spacing: 0.03em;
+}
+
+/* ─── Trace popover ─────────────────────────────── */
+.app-shell__workflow-trace-popover {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  background: #111;
+  border-top: 1px solid #333;
+  overflow-y: auto;
+  z-index: 10;
+  font-size: 0.7rem;
+}
+.app-shell__workflow-trace-popover header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.6rem;
+  background: #161616;
+  border-bottom: 1px solid #2a2a2a;
+  position: sticky;
+  top: 0;
+}
+.app-shell__workflow-trace-popover header button {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.app-shell__workflow-trace-popover header button:hover {
+  color: #fff;
+}
+.app-shell__workflow-trace-empty {
+  padding: 1rem;
+  color: #666;
+  text-align: center;
+  font-style: italic;
+}
+.app-shell__workflow-trace-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.app-shell__workflow-trace-steps li {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid #1e1e1e;
+  align-items: center;
+}
+.app-shell__workflow-trace-steps li:hover {
+  background: #1a1a1a;
+}
+.app-shell__workflow-trace-type {
+  background: #222;
+  border: 1px solid #333;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-family: monospace;
+  color: #9cdcfe;
+  min-width: 5rem;
+  text-align: center;
+}
+.app-shell__workflow-trace-time {
+  color: #888;
+}
+.app-shell__workflow-trace-duration {
+  color: #4fc3f7;
+  margin-left: auto;
+  font-family: monospace;
+}
+
+.app-shell__workflow-waves article {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+}
+
+.app-shell__workflow-waves article div,
+.app-shell__trace-list article div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.app-shell__workflow-waves strong,
+.app-shell__trace-list code {
+  border: 1px solid #343434;
+  background: #151515;
+  padding: 0.16rem 0.42rem;
+}
+
+.app-shell__trace-list code {
+  color: #9cdcfe;
+  font-size: 0.68rem;
 }
 
 .app-shell__settings-modal-header {
@@ -1606,6 +2511,27 @@ a:focus-visible {
   cursor: not-allowed;
 }
 
+.app-shell__agent-omnibar-select--boxed {
+  height: 2.2rem;
+  border: 1px solid #303030;
+  background-color: #151515;
+  padding-left: 0.65rem;
+}
+
+.app-shell__agent-auto-team-pill {
+  height: 1.7rem;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid #343434;
+  border-radius: 0.35rem;
+  background: #202020;
+  color: #d6d6d6;
+  padding: 0 0.55rem;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
 .app-shell__agent-plus-button {
   width: 1.55rem;
   height: 1.55rem;
@@ -2183,8 +3109,18 @@ a:focus-visible {
 
   .app-shell__explorer-summary,
   .app-shell__context-menu,
-  .app-shell__settings-grid {
+  .app-shell__settings-grid,
+  .app-shell__manager-split,
+  .app-shell__manager-grid,
+  .app-shell__metric-grid,
+  .app-shell__workflow-waves {
     grid-template-columns: 1fr;
+  }
+
+  .app-shell__agent-manager-modal,
+  .app-shell__settings-modal {
+    width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 3rem);
   }
 
   .app-shell__settings-card--wide { grid-column: span 1; }

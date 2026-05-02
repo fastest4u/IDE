@@ -36,13 +36,13 @@ aliases:
 | Workspace editing | `services/model-gateway/src/routes/workspace.ts`, `memory/workspace-context.ts` | index workspace, list/read relative paths, guarded save, conflict check, file-size guard |
 | Terminal | `services/model-gateway/src/routes/terminal.ts`, `src/terminal/terminal-session.ts`, `apps/web/src/components/terminal.tsx` | มี PTY-backed terminal session, cwd guard, input/output, restart/kill controls |
 | Collaboration | `packages/ai-core/src/collaboration.ts`, `/ai/collaborate` | มี role orchestration และ synthesizer output ผ่าน provider mesh |
-| Local-first settings | `services/model-gateway/src/settings.ts`, `/settings` | มี settings persistence, privacy `localOnly`, local provider config, provider hot-reload/status/test, workspace overrides, session memory file; shell ปัจจุบันยังไม่ mount settings panel แยก |
+| Local-first settings | `services/model-gateway/src/settings.ts`, `/settings` | มี settings persistence, privacy `localOnly`, local provider config, provider hot-reload/status/test, workspace overrides, session memory file; provider settings accessible ผ่าน agent manager modal (Settings tab/`ProviderSettings.tsx`) |
 
 ## ยังเป็น gap สำคัญ
 
 - ยังไม่มี test framework, lint config, formatter config, CI, pre-commit, หรือ codegen config.
 - `services/model-gateway` ยังถือ active workspace root ได้ทีละค่าเดียวต่อ process; การสลับ workspace จะมีผลกับ terminal, patch writer, และทุก client ที่ใช้ gateway instance เดียวกัน.
-- Shell ปัจจุบันซ่อน dedicated settings UI ออกไปแล้ว แม้ backend settings/runtime API จะยังทำงานครบ.
+- Settings/provider UI มีอยู่ใน agent manager modal (`ProviderSettings.tsx`) แต่ยังไม่มีหน้า settings แยกเต็มรูปแบบ.
 - Endpoint ฝั่งเขียนไฟล์/terminal มี origin และ body-size guard แล้ว แต่ยังไม่มี user auth; runtime นี้ยังตั้งอยู่บนสมมติฐานว่าใช้ใน local trusted environment.
 
 ## เพิ่งทำเสร็จ

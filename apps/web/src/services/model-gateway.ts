@@ -1,14 +1,22 @@
 import type {
+  AgentDefinition,
+  AgentDefinitionInput,
   AIRequest,
   AIResponse,
   AIStreamEvent,
   IDESettings,
   IDESettingsUpdate,
+  CollaborationResponse,
+  CollaborationTeamId,
+  CollaborationWorkflowDefinition,
+  CollaborationWorkflowInput,
   PatchCreateRequest,
   PatchRecord,
   ProviderId,
   ProviderRuntimeStatusResponse,
   ProviderTestConnectionResponse,
+  WorkflowRunState,
+  WorkflowVersion,
 } from '@ide/protocol';
 
 const configuredGatewayUrl = import.meta.env.VITE_MODEL_GATEWAY_URL?.trim();
@@ -68,6 +76,282 @@ export interface WorkspaceSummaryResponse {
   ready: boolean;
   rootDir: string | null;
   name: string;
+}
+export interface AgentListResponse {
+  agents: AgentDefinition[];
+  activeAgentId: string;
+}
+
+export interface WorkflowListResponse {
+  workflows: CollaborationWorkflowDefinition[];
+}
+
+export interface TraceStep {
+  id: string;
+  type: 'prompt' | 'response' | 'tool_call' | 'tool_result' | 'error' | 'retry' | 'permission' | 'workflow' | 'handoff' | 'approval';
+  timestamp: string;
+  agentId: string;
+  sessionId: string;
+  durationMs?: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionTrace {
+  sessionId: string;
+  agentId: string;
+  startedAt: string;
+  endedAt?: string;
+  steps: TraceStep[];
+  summary: {
+    totalSteps: number;
+    totalTokens: number;
+    totalCost: number;
+    totalDurationMs: number;
+    toolCalls: number;
+    errors: number;
+    retries: number;
+  };
+}
+
+export interface ObsidianNoteSummary {
+  path: string;
+  title: string;
+  tags: string[];
+  aliases: string[];
+  excerpt: string;
+  content: string;
+  updatedAt: string;
+  links: string[];
+  category: string;
+}
+
+export interface ObsidianMemoryStatsResponse {
+  obsidian: {
+    ready: boolean;
+    total: number;
+    byCategory: Record<string, number>;
+    tags: string[];
+  };
+}
+
+export async function listAgents(): Promise<AgentListResponse> {
+  const response = await gatewayFetch('/agents');
+  if (!response.ok) throw new Error(`List agents failed with ${response.status}`);
+  return (await response.json()) as AgentListResponse;
+}
+
+export async function activateAgent(agentId: string): Promise<AgentListResponse> {
+  const response = await gatewayFetch(`/agents/${encodeURIComponent(agentId)}/activate`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error(`Activate agent failed with ${response.status}`);
+  return (await response.json()) as AgentListResponse;
+}
+
+export async function saveAgent(input: AgentDefinitionInput): Promise<AgentListResponse> {
+  const response = await gatewayFetch('/agents', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw await readError(response, 'Save agent');
+  return (await response.json()) as AgentListResponse;
+}
+
+export async function listWorkflows(): Promise<WorkflowListResponse> {
+  const response = await gatewayFetch('/workflows');
+  if (!response.ok) throw new Error(`List workflows failed with ${response.status}`);
+  return (await response.json()) as WorkflowListResponse;
+}
+
+export async function saveWorkflow(input: CollaborationWorkflowInput): Promise<WorkflowListResponse> {
+  const response = await gatewayFetch('/workflows', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw await readError(response, 'Save workflow');
+  return (await response.json()) as WorkflowListResponse;
+}
+
+export async function deleteWorkflow(workflowId: string): Promise<WorkflowListResponse> {
+  const response = await gatewayFetch(`/workflows/${encodeURIComponent(workflowId)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw await readError(response, 'Delete workflow');
+  return (await response.json()) as WorkflowListResponse;
+}
+
+export async function getWorkflowRun(runId: string): Promise<WorkflowRunState> {
+  const response = await gatewayFetch(`/workflows/runs/${encodeURIComponent(runId)}`);
+  if (!response.ok) throw await readError(response, 'Get workflow run');
+  const body = (await response.json()) as { run: WorkflowRunState };
+  return body.run;
+}
+
+export async function approveWorkflowRun(runId: string, nodeId?: string, reason?: string): Promise<WorkflowRunState> {
+  const response = await gatewayFetch(`/workflows/runs/${encodeURIComponent(runId)}/approve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId, reason }),
+  });
+  if (!response.ok) throw await readError(response, 'Approve workflow run');
+  const body = (await response.json()) as { run: WorkflowRunState };
+  return body.run;
+}
+
+export async function rejectWorkflowRun(runId: string, nodeId?: string, reason?: string): Promise<WorkflowRunState> {
+  const response = await gatewayFetch(`/workflows/runs/${encodeURIComponent(runId)}/reject`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId, reason }),
+  });
+  if (!response.ok) throw await readError(response, 'Reject workflow run');
+  const body = (await response.json()) as { run: WorkflowRunState };
+  return body.run;
+}
+
+export async function cancelWorkflowRun(runId: string): Promise<WorkflowRunState> {
+  const response = await gatewayFetch(`/workflows/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw await readError(response, 'Cancel workflow run');
+  const body = (await response.json()) as { run: WorkflowRunState };
+  return body.run;
+}
+
+export async function listWorkflowRuns(workflowId?: string): Promise<WorkflowRunState[]> {
+  const path = workflowId
+    ? `/workflows/${encodeURIComponent(workflowId)}/runs`
+    : '/workflows/runs';
+  const response = await gatewayFetch(path);
+  if (!response.ok) throw await readError(response, 'List workflow runs');
+  const body = (await response.json()) as { runs: WorkflowRunState[] };
+  return body.runs;
+}
+
+export async function getWorkflowVersions(workflowId: string): Promise<WorkflowVersion[]> {
+  const response = await gatewayFetch(`/workflows/${encodeURIComponent(workflowId)}/versions`);
+  if (!response.ok) throw await readError(response, 'Get workflow versions');
+  const body = (await response.json()) as { versions: WorkflowVersion[] };
+  return body.versions;
+}
+
+export async function rollbackWorkflow(workflowId: string, version: number): Promise<{ workflow: CollaborationWorkflowDefinition; workflows: CollaborationWorkflowDefinition[] }> {
+  const response = await gatewayFetch(`/workflows/${encodeURIComponent(workflowId)}/rollback`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ version }),
+  });
+  if (!response.ok) throw await readError(response, 'Rollback workflow');
+  return (await response.json()) as { workflow: CollaborationWorkflowDefinition; workflows: CollaborationWorkflowDefinition[] };
+}
+
+export interface WorkflowRunStreamEvent {
+  type: string;
+  runId: string;
+  nodeId?: string;
+  status?: string;
+  error?: string;
+  timestamp?: string;
+  run?: WorkflowRunState;
+}
+
+export function streamWorkflowRun(
+  runId: string,
+  onEvent: (event: WorkflowRunStreamEvent) => void,
+): { close: () => void } {
+  const url = `${MODEL_GATEWAY_URL}/workflows/runs/${encodeURIComponent(runId)}/stream`;
+  const eventSource = new EventSource(url);
+
+  eventSource.onmessage = (msg) => {
+    if (msg.data === '[DONE]') {
+      eventSource.close();
+      return;
+    }
+    try {
+      const event = JSON.parse(msg.data) as WorkflowRunStreamEvent;
+      onEvent(event);
+    } catch { /* skip malformed events */ }
+  };
+
+  eventSource.onerror = () => {
+    eventSource.close();
+  };
+
+  return { close: () => eventSource.close() };
+}
+
+export async function listTraces(): Promise<SessionTrace[]> {
+  const response = await gatewayFetch('/trace/sessions');
+  if (!response.ok) throw new Error(`List traces failed with ${response.status}`);
+  const body = (await response.json()) as { traces: SessionTrace[] };
+  return body.traces;
+}
+
+export interface NodeTraceStep {
+  id: string;
+  type: string;
+  timestamp: string;
+  agentId: string;
+  sessionId: string;
+  durationMs?: number;
+  metadata: Record<string, unknown>;
+}
+
+export async function getNodeTraceSteps(nodeId: string, sessionId?: string): Promise<NodeTraceStep[]> {
+  const params = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+  const response = await gatewayFetch(`/trace/nodes/${encodeURIComponent(nodeId)}${params}`);
+  if (!response.ok) throw await readError(response, 'Get node trace steps');
+  const body = (await response.json()) as { steps: NodeTraceStep[] };
+  return body.steps;
+}
+
+export async function getObsidianMemoryStats(): Promise<ObsidianMemoryStatsResponse> {
+  const response = await gatewayFetch('/memory/obsidian/stats');
+  if (!response.ok) throw new Error(`Get Obsidian memory stats failed with ${response.status}`);
+  return (await response.json()) as ObsidianMemoryStatsResponse;
+}
+
+export async function searchObsidianMemory(query: string): Promise<ObsidianNoteSummary[]> {
+  const response = await gatewayFetch('/memory/obsidian/search', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+  if (!response.ok) throw await readError(response, 'Search Obsidian memory');
+  const body = (await response.json()) as { notes: ObsidianNoteSummary[] };
+  return body.notes;
+}
+
+export async function runCollaboration(input: {
+  goal: string;
+  context: AIRequest['context'];
+  team?: CollaborationTeamId;
+  workflowId?: string;
+  maxTokensPerRole?: number;
+  temperature?: number;
+}): Promise<CollaborationResponse> {
+  const response = await gatewayFetch('/ai/collaborate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: crypto.randomUUID(),
+      goal: input.goal,
+      kind: 'edit',
+      team: input.team ?? 'auto',
+      workflowId: input.workflowId,
+      context: input.context,
+      maxTokensPerRole: input.maxTokensPerRole,
+      temperature: input.temperature,
+    }),
+  }, STREAM_CONNECT_TIMEOUT_MS);
+
+  if (!response.ok) {
+    throw await readError(response, 'Run multi-agent collaboration');
+  }
+
+  return (await response.json()) as CollaborationResponse;
 }
 
 export interface WorkspaceFilesResponse {

@@ -10,3 +10,4 @@ export {
   type CompactionOptions,
   type CompactionResult,
 } from './compaction';
+export { AgentLoader, type AgentLoaderOptions } from './agent-loader';

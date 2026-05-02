@@ -187,6 +187,53 @@ export interface ProviderPolicyEngine {
   choose(request: AIRequest, candidates: RoutingCandidate[]): Promise<RoutingDecision>;
 }
 
+// Agent system types (OpenCode-style)
+export type AgentMode = 'build' | 'plan' | 'explore';
+
+export interface AgentPermission {
+  read?: 'allow' | 'ask' | 'deny';
+  edit?: 'allow' | 'ask' | 'deny';
+  write?: 'allow' | 'ask' | 'deny';
+  glob?: 'allow' | 'ask' | 'deny';
+  grep?: 'allow' | 'ask' | 'deny';
+  list?: 'allow' | 'ask' | 'deny';
+  bash?: 'allow' | 'ask' | 'deny';
+  task?: 'allow' | 'ask' | 'deny';
+  webfetch?: 'allow' | 'ask' | 'deny';
+  websearch?: 'allow' | 'ask' | 'deny';
+  applyPatch?: 'allow' | 'ask' | 'deny';
+  lsp?: 'allow' | 'ask' | 'deny';
+}
+
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  description: string;
+  mode: AgentMode;
+  permissions: AgentPermission;
+  prompt?: string;
+  temperature?: number;
+  selectable: boolean;
+}
+
+export interface AgentDefinitionInput {
+  id?: string;
+  name: string;
+  description: string;
+  mode: AgentMode;
+  permissions?: AgentPermission;
+  prompt?: string;
+  temperature?: number;
+  selectable?: boolean;
+}
+
+export interface AgentSessionMeta {
+  agentId: string;
+  workspaceId: string;
+  workspaceRoot?: string;
+  instructionsSource?: string;
+}
+
 export interface AIRouter {
   route(request: AIRequest): Promise<RoutingDecision>;
 }

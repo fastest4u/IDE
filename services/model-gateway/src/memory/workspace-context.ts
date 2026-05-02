@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import {
   InMemoryWorkspaceIndex,
+  ObsidianKnowledgeBase,
+  type ObsidianNote,
   type FileKind,
 } from '@ide/workspace-core';
 
@@ -32,6 +34,13 @@ export interface WorkspaceWriteResult {
   updatedAt: string;
 }
 
+export interface ObsidianMemoryStats {
+  ready: boolean;
+  total: number;
+  byCategory: Record<string, number>;
+  tags: string[];
+}
+
 export function resolveWorkspaceRootInput(rootDir: string): string {
   const trimmed = rootDir.trim();
   if (trimmed === '~') {
@@ -45,6 +54,7 @@ export function resolveWorkspaceRootInput(rootDir: string): string {
 
 export class WorkspaceContextService {
   private index = new InMemoryWorkspaceIndex();
+  private obsidianKb: ObsidianKnowledgeBase | null = null;
   private rootDir: string | null = null;
   private writer = new WorkspaceWriter();
 
@@ -55,7 +65,9 @@ export class WorkspaceContextService {
     await this.assertWorkspaceRoot(normalizedRootDir);
     this.rootDir = normalizedRootDir;
     this.writer.setWorkspaceRoot(this.rootDir);
+    this.obsidianKb = new ObsidianKnowledgeBase({ workspaceRoot: this.rootDir });
     await this.refreshIndex();
+    await this.obsidianKb.buildIndex();
   }
 
   isReady(): boolean {
@@ -71,6 +83,9 @@ export class WorkspaceContextService {
       throw new WorkspaceFileError('No workspace loaded', 'WORKSPACE_NOT_READY');
     }
     await this.index.indexDirectory(this.rootDir);
+    if (this.obsidianKb) {
+      await this.obsidianKb.buildIndex();
+    }
   }
 
   async getRepoSummary(): Promise<string> {
@@ -188,6 +203,70 @@ export class WorkspaceContextService {
     return results.slice(0, 20);
   }
 
+  searchObsidianNotes(query: string, limit = 8): ObsidianNote[] {
+    if (!this.obsidianKb) return [];
+    return this.obsidianKb.search({ query, limit });
+  }
+
+  buildObsidianKnowledgeContext(query: string, maxNotes = 5): string {
+    if (!this.obsidianKb) return '';
+    return this.obsidianKb.buildKnowledgeContext(query, maxNotes);
+  }
+
+  getObsidianStats(): ObsidianMemoryStats {
+    if (!this.obsidianKb) {
+      return { ready: false, total: 0, byCategory: {}, tags: [] };
+    }
+    return { ready: true, ...this.obsidianKb.getStats() };
+  }
+
+  async writeObsidianMemoryNote(input: {
+    title: string;
+    sessionId: string;
+    summary: string;
+    content: string;
+    tags?: string[];
+  }): Promise<WorkspaceWriteResult> {
+    if (!this.rootDir) {
+      throw new WorkspaceFileError('No workspace loaded', 'WORKSPACE_NOT_READY');
+    }
+
+    const created = new Date().toISOString();
+    const slug = slugify(`${created.slice(0, 10)}-${input.title}`);
+    const filePath = `docs/memory/agent-sessions/${slug}.md`;
+    const tags = ['project/my-ide', 'ai/memory', 'agent/session', ...(input.tags ?? [])];
+    const note = [
+      '---',
+      `title: ${yamlString(input.title)}`,
+      `created: ${created.slice(0, 10)}`,
+      'status: active',
+      'type: memory',
+      'tags:',
+      ...tags.map((tag) => `  - ${tag}`),
+      `sessionId: ${yamlString(input.sessionId)}`,
+      '---',
+      '',
+      `# ${input.title}`,
+      '',
+      '> [!note] Summary',
+      `> ${input.summary.replace(/\n/g, '\n> ')}`,
+      '',
+      input.content,
+      '',
+      '## Related Notes',
+      '',
+      '- [[ai-first-ide]]',
+      '- [[obsidian-vault-guide]]',
+      '',
+    ].join('\n');
+
+    const saved = await this.writeFileContent({ filePath, content: note });
+    if (this.obsidianKb) {
+      await this.obsidianKb.buildIndex();
+    }
+    return saved;
+  }
+
   async getActiveFileContext(
     activeFilePath?: string,
     openFiles?: string[],
@@ -264,4 +343,16 @@ export class WorkspaceContextService {
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err;
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96) || `memory-${Date.now()}`;
+}
+
+function yamlString(value: string): string {
+  return JSON.stringify(value);
 }

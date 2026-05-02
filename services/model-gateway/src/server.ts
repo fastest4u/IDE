@@ -10,8 +10,12 @@ import type { ProviderConnectionConfig } from './config/provider-config';
 import { AIController } from './controller';
 import { registerHealthRoutes } from './routes/health';
 import { registerAIRoutes } from './routes/ai';
+import { registerAgentRoutes } from './routes/agents';
+import { registerWorkflowRoutes } from './routes/workflows';
 import { registerPatchRoutes } from './routes/patches';
+import { registerTraceRoutes } from './routes/trace';
 import { registerSessionRoutes } from './routes/sessions';
+import { registerMemoryRoutes } from './routes/memory';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { registerSettingsRoutes } from './routes/settings';
 import { registerTerminalRoutes } from './routes/terminal';
@@ -244,8 +248,12 @@ export async function createModelGatewayServer(
   app.get('/health', async () => ({ status: 'ok' as const }));
   app.register(registerHealthRoutes, { controller });
   app.register(registerAIRoutes, { controller });
-  app.register(registerPatchRoutes, { patchService });
+  app.register(registerAgentRoutes, { controller });
+  app.register(registerWorkflowRoutes, { controller });
+  app.register(registerPatchRoutes, { patchService, traceService: controller.getTraceService() });
+  app.register(registerTraceRoutes, { controller });
   app.register(registerSessionRoutes, { controller });
+  app.register(registerMemoryRoutes, { controller });
   app.register(registerWorkspaceRoutes, { controller, patchService, terminalService, workspacePicker });
   app.register(registerSettingsRoutes, {
     settingsService,

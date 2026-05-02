@@ -12,3 +12,5 @@ coverage/
 .DS_Store
 .obsidian/
 mcp.json
+opencode-ref/
+.opencode/
