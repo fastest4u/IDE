@@ -18,6 +18,8 @@ import type {
   ContextPacket,
 } from '@ide/protocol';
 
+import type { ObsidianDatabaseService } from '../obsidian-database';
+
 // ─── Condition expression evaluator (safe, no eval) ─────────
 
 const ALLOWED_OPERATORS = new Set([
@@ -95,9 +97,26 @@ export interface WorkflowEngineListener {
   (event: WorkflowRunEvent): void;
 }
 
+export interface WorkflowEngineOptions {
+  obsidianDb?: ObsidianDatabaseService;
+}
+
 export class WorkflowEngine {
   private runs = new Map<string, WorkflowRunState>();
   private listeners: WorkflowEngineListener[] = [];
+
+  constructor(private readonly options: WorkflowEngineOptions = {}) {}
+
+  async hydrateFromObsidian(): Promise<void> {
+    if (!this.options.obsidianDb) return;
+    const runs = await this.options.obsidianDb.readWorkflowRuns();
+    for (const run of runs) {
+      const existing = this.runs.get(run.runId);
+      if (!existing || run.updatedAt.localeCompare(existing.updatedAt) > 0) {
+        this.runs.set(run.runId, run);
+      }
+    }
+  }
 
   // ─── Event system ─────────────────────────────────
 
@@ -163,6 +182,7 @@ export class WorkflowEngine {
     };
 
     this.runs.set(runId, run);
+    await this.mirrorRun(run);
     return this.runLoop(run, graph, rolePlan, packet, executeNode);
   }
 
@@ -203,6 +223,7 @@ export class WorkflowEngine {
       run.updatedAt = decision.decidedAt;
       this.skipDownstream(run, approvalNodeId, graph);
       this.emit({ type: 'run_failed', runId, timestamp: decision.decidedAt });
+      await this.mirrorRun(run);
       return run;
     }
 
@@ -235,6 +256,7 @@ export class WorkflowEngine {
       }
     }
 
+    void this.mirrorRun(run);
     return run;
   }
 
@@ -269,12 +291,14 @@ export class WorkflowEngine {
       for (const result of results) {
         if (result.status === 'fulfilled' && result.value === 'paused') {
           run.updatedAt = new Date().toISOString();
+          await this.mirrorRun(run);
           return run;
         }
         if (result.status === 'fulfilled' && result.value === 'stopped') {
           run.status = 'failed';
           run.updatedAt = new Date().toISOString();
           this.emit({ type: 'run_failed', runId: run.runId, timestamp: run.updatedAt });
+          await this.mirrorRun(run);
           return run;
         }
       }
@@ -292,6 +316,7 @@ export class WorkflowEngine {
     const eventType = run.status === 'completed' ? 'run_completed' : 'run_failed';
     this.emit({ type: eventType, runId: run.runId, timestamp: run.updatedAt });
 
+    await this.mirrorRun(run);
     return run;
   }
 
@@ -625,5 +650,12 @@ export class WorkflowEngine {
         queue.push(edge.target);
       }
     }
+  }
+
+  private async mirrorRun(run: WorkflowRunState): Promise<void> {
+    if (!this.options.obsidianDb) return;
+    try {
+      await this.options.obsidianDb.writeWorkflowRun(run);
+    } catch {}
   }
 }

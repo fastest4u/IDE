@@ -25,6 +25,9 @@ export {
 export {
   ObsidianKnowledgeBase,
   type ObsidianNote,
+  type ObsidianChunk,
   type ObsidianKBQuery,
+  type ObsidianRAGQuery,
+  type ObsidianRAGResult,
   type ObsidianKBOptions,
 } from './obsidian-kb';

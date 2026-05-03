@@ -3,7 +3,7 @@ import path from 'node:path';
 
 export interface AuditLogEntry {
   timestamp: string;
-  action: 'patch.create' | 'patch.approve' | 'patch.apply' | 'patch.rollback' | 'workspace.save' | 'terminal.exec';
+  action: 'capability.denied' | 'patch.create' | 'patch.approve' | 'patch.apply' | 'patch.rollback' | 'workspace.save' | 'terminal.exec';
   entityId: string;
   workspaceRoot?: string;
   actor?: string;

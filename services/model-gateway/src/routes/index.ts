@@ -3,3 +3,4 @@ export * from './health';
 export * from './patches';
 export * from './settings';
 export * from './terminal';
+export * from './tool-approvals';

@@ -19,7 +19,10 @@ import { registerMemoryRoutes } from './routes/memory';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { registerSettingsRoutes } from './routes/settings';
 import { registerTerminalRoutes } from './routes/terminal';
+import { registerToolApprovalRoutes } from './routes/tool-approvals';
 import { PatchService, FileBackedPatchStore } from './patches';
+import { FileBackedToolApprovalStore, ToolApprovalService } from './tool-approvals';
+import { ObsidianDatabaseService } from './obsidian-database';
 
 import { AIRouterEngine } from './router/ai-router';
 import { InMemoryModelRegistry } from './router/registry';
@@ -42,6 +45,8 @@ import { resolveWorkspaceRootInput } from './memory/workspace-context';
 import { LocalFirstSettingsService } from './settings';
 import { TerminalSessionService } from './terminal/terminal-session';
 import { createOriginGuard } from './security/request-guard';
+import { LocalCapabilityPolicyService } from './security/capability-policy';
+import { AgentRunService } from './agent-run';
 import { NativeWorkspacePickerService, type WorkspacePickerService } from './workspace-picker';
 import { createCacheKeyPlugin } from './plugin-hooks';
 
@@ -186,18 +191,27 @@ export async function createModelGatewayServer(
   const providerConfigs = [...settingsService.getLocalProviderConfigs(), ...staticProviderConfigs];
   const providerRuntime = buildProviderRuntime(providerConfigs);
   const reloadProviderRuntime = () => providerRuntime.reloadProviders([...settingsService.getLocalProviderConfigs(), ...staticProviderConfigs]);
+  const obsidianDb = new ObsidianDatabaseService({
+    workspaceRoot,
+    enabled: settingsService.getSettings().memory.persistSessionMemory,
+  });
   const sessionStore = new InMemorySessionStore({
     persist: settingsService.getSettings().memory.persistSessionMemory,
     persistenceFilePath: path.join(settingsService.getDataDir(), 'sessions.json'),
+    obsidianDb,
   });
   const patchStore = new FileBackedPatchStore({
     filePath: path.join(settingsService.getDataDir(), 'patches.json'),
+  });
+  const approvalStore = new FileBackedToolApprovalStore({
+    filePath: path.join(settingsService.getDataDir(), 'tool-approvals.json'),
   });
   const patchService = new PatchService(
     patchStore,
     new WorkspaceWriter(workspaceRoot),
     sessionStore,
   );
+  const approvalService = new ToolApprovalService(approvalStore, obsidianDb);
   const terminalService = new TerminalSessionService(workspaceRoot);
   const workspacePicker = options.workspacePicker ?? new NativeWorkspacePickerService();
   const auditLog = new AuditLogService({
@@ -212,7 +226,9 @@ export async function createModelGatewayServer(
     patchService,
     undefined,
     settingsService,
+    obsidianDb,
   );
+  const agentRunService = new AgentRunService({ controller, maxSteps: 10 });
 
   // Register OpenCode-style cache key stabilization plugin
   controller.registerPluginHook(
@@ -221,6 +237,10 @@ export async function createModelGatewayServer(
       workspaceRoot,
     }),
   );
+  const handleSettingsUpdated = () => {
+    reloadProviderRuntime();
+    controller.refreshPermissionsFromSettings();
+  };
 
   const allowedOrigins = getAllowedOrigins();
   const isOriginAllowed = createAllowedOriginMatcher(allowedOrigins);
@@ -244,29 +264,37 @@ export async function createModelGatewayServer(
     isOriginAllowed,
     maxBodyBytes: Number(process.env.IDE_MAX_BODY_BYTES ?? '262144'),
   }));
+  const capabilityPolicy = new LocalCapabilityPolicyService({ auditLog });
+  app.addHook('preHandler', capabilityPolicy.createGuard());
 
   app.get('/health', async () => ({ status: 'ok' as const }));
   app.register(registerHealthRoutes, { controller });
   app.register(registerAIRoutes, { controller });
-  app.register(registerAgentRoutes, { controller });
+  app.register(registerAgentRoutes, { controller, agentRunService });
   app.register(registerWorkflowRoutes, { controller });
   app.register(registerPatchRoutes, { patchService, traceService: controller.getTraceService() });
   app.register(registerTraceRoutes, { controller });
   app.register(registerSessionRoutes, { controller });
   app.register(registerMemoryRoutes, { controller });
-  app.register(registerWorkspaceRoutes, { controller, patchService, terminalService, workspacePicker });
+  app.register(registerWorkspaceRoutes, { controller, patchService, approvalService, terminalService, workspacePicker });
   app.register(registerSettingsRoutes, {
     settingsService,
     controller,
-    onSettingsUpdated: reloadProviderRuntime,
+    onSettingsUpdated: handleSettingsUpdated,
   });
-  app.register(registerTerminalRoutes, { terminalService });
+  app.register(registerToolApprovalRoutes, { approvalService, terminalService });
+  app.register(registerTerminalRoutes, { terminalService, controller, approvalService });
   app.addHook('onReady', async () => {
     await patchStore.hydrate();
+    await approvalStore.hydrate();
     await controller.setWorkspaceRoot(workspaceRoot);
     const activeWorkspaceRoot = controller.getWorkspaceRoot() ?? workspaceRoot;
+    obsidianDb.setWorkspaceRoot(activeWorkspaceRoot);
     patchService.setWorkspaceRoot(activeWorkspaceRoot);
+    approvalService.setWorkspaceRoot(activeWorkspaceRoot);
     terminalService.setWorkspaceRoot(activeWorkspaceRoot);
+    await approvalService.hydrateFromObsidian();
+    await controller.hydrateObsidianDatabase();
     await auditLog.append({ action: 'workspace.save', entityId: 'bootstrap', workspaceRoot: activeWorkspaceRoot, details: { status: 'ready' } });
   });
 

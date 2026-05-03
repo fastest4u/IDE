@@ -106,6 +106,7 @@ export class WorkflowStore {
     }
 
     const graph = normalizeGraph(input.graph, roles);
+    validateWorkflowGraph(graph, roles);
     const now = new Date().toISOString();
     const workflows = this.readWorkflows();
     const id = normalizeWorkflowId(input.id ?? name);
@@ -403,6 +404,94 @@ function normalizeTemperature(value: number | undefined): number | undefined {
     return undefined;
   }
   return Math.min(2, Math.max(0, value));
+}
+
+function validateWorkflowGraph(graph: CollaborationWorkflowGraph, roles: CollaborationRole[]): void {
+  if (!graph.nodes.length) {
+    throw new Error('Workflow graph must contain at least one node');
+  }
+
+  const nodeIds = new Set<string>();
+  for (const node of graph.nodes) {
+    if (nodeIds.has(node.id)) {
+      throw new Error(`Duplicate workflow node id: ${node.id}`);
+    }
+    nodeIds.add(node.id);
+  }
+
+  if (!graph.nodes.some((node) => node.type === 'start')) {
+    throw new Error('Workflow graph must include a start node');
+  }
+  if (!graph.nodes.some((node) => node.type === 'end')) {
+    throw new Error('Workflow graph must include an end node');
+  }
+
+  const startNodes = graph.nodes.filter((node) => node.type === 'start');
+  const endNodes = graph.nodes.filter((node) => node.type === 'end');
+  if (startNodes.length > 1) {
+    throw new Error('Workflow graph can include only one start node');
+  }
+  if (endNodes.length > 1) {
+    throw new Error('Workflow graph can include only one end node');
+  }
+
+  const edgesByTarget = new Map<string, CollaborationWorkflowEdge[]>();
+  const edgesBySource = new Map<string, CollaborationWorkflowEdge[]>();
+  for (const edge of graph.edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      throw new Error(`Workflow edge references unknown node: ${edge.id}`);
+    }
+    if (edge.source === edge.target) {
+      throw new Error(`Workflow edge cannot self-reference: ${edge.id}`);
+    }
+    edgesByTarget.set(edge.target, [...(edgesByTarget.get(edge.target) ?? []), edge]);
+    edgesBySource.set(edge.source, [...(edgesBySource.get(edge.source) ?? []), edge]);
+  }
+
+  const reachable = new Set<string>();
+  const queue = [...startNodes.map((node) => node.id)];
+  while (queue.length) {
+    const current = queue.shift() as string;
+    if (reachable.has(current)) continue;
+    reachable.add(current);
+    for (const edge of edgesBySource.get(current) ?? []) {
+      queue.push(edge.target);
+    }
+  }
+
+  if (reachable.size !== graph.nodes.length) {
+    const unreachable = graph.nodes.filter((node) => !reachable.has(node.id)).map((node) => node.id);
+    throw new Error(`Workflow graph contains unreachable node(s): ${unreachable.join(', ')}`);
+  }
+
+  const roleNodes = graph.nodes.filter((node) => node.role);
+  for (const role of roles) {
+    if (role === 'synthesizer') continue;
+    if (!roleNodes.some((node) => node.role === role)) {
+      throw new Error(`Workflow graph is missing a node for role: ${role}`);
+    }
+  }
+
+  const inDegree = new Map<string, number>(graph.nodes.map((node) => [node.id, 0]));
+  for (const edge of graph.edges) {
+    inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
+  }
+
+  const topoQueue = graph.nodes.filter((node) => (inDegree.get(node.id) ?? 0) === 0).map((node) => node.id);
+  let visited = 0;
+  while (topoQueue.length) {
+    const current = topoQueue.shift() as string;
+    visited += 1;
+    for (const edge of edgesBySource.get(current) ?? []) {
+      const nextCount = (inDegree.get(edge.target) ?? 0) - 1;
+      inDegree.set(edge.target, nextCount);
+      if (nextCount === 0) topoQueue.push(edge.target);
+    }
+  }
+
+  if (visited !== graph.nodes.length) {
+    throw new Error('Workflow graph contains a cycle');
+  }
 }
 
 function isWorkflowDefinition(value: unknown): value is CollaborationWorkflowDefinition {

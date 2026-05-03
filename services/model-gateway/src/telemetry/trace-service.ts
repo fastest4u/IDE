@@ -1,5 +1,7 @@
 import type { ProviderUsageOutcome } from '@ide/protocol';
 
+import type { ObsidianDatabaseService } from '../obsidian-database';
+
 export interface TraceStep {
   id: string;
   type: 'prompt' | 'response' | 'tool_call' | 'tool_result' | 'error' | 'retry' | 'permission' | 'workflow' | 'handoff' | 'approval';
@@ -97,14 +99,29 @@ export interface SessionTrace {
 
 export interface TraceServiceOptions {
   maxSessions?: number;
+  obsidianDb?: ObsidianDatabaseService;
 }
 
 export class TraceService {
   private traces: Map<string, SessionTrace> = new Map();
   private maxSessions: number;
+  private readonly obsidianDb?: ObsidianDatabaseService;
 
   constructor(options: TraceServiceOptions = {}) {
     this.maxSessions = options.maxSessions ?? 100;
+    this.obsidianDb = options.obsidianDb;
+  }
+
+  async hydrateFromObsidian(): Promise<void> {
+    if (!this.obsidianDb) return;
+    const traces = await this.obsidianDb.readTraces();
+    for (const trace of traces) {
+      const existing = this.traces.get(trace.sessionId);
+      const existingUpdated = existing ? traceUpdatedAt(existing) : '';
+      if (!existing || traceUpdatedAt(trace).localeCompare(existingUpdated) > 0) {
+        this.traces.set(trace.sessionId, trace);
+      }
+    }
   }
 
   startSession(sessionId: string, agentId: string): string {
@@ -124,6 +141,7 @@ export class TraceService {
       },
     };
     this.traces.set(sessionId, trace);
+    this.mirrorTrace(trace);
 
     // Enforce max sessions
     if (this.traces.size > this.maxSessions) {
@@ -336,6 +354,7 @@ export class TraceService {
     const trace = this.traces.get(sessionId);
     if (trace) {
       trace.endedAt = new Date().toISOString();
+      this.mirrorTrace(trace);
     }
   }
 
@@ -411,6 +430,7 @@ export class TraceService {
     if (step.type === 'tool_call') trace.summary.toolCalls++;
     if (step.type === 'error') trace.summary.errors++;
     if (step.type === 'retry') trace.summary.retries++;
+    this.mirrorTrace(trace);
   }
 
   private estimateCost(usage?: ProviderUsageOutcome): number {
@@ -431,4 +451,13 @@ export class TraceService {
     const baseCost = Object.entries(costs).find(([k]) => usage.modelId?.toLowerCase().includes(k))?.[1] ?? 0;
     return baseCost * 0.000001; // per token estimate
   }
+
+  private mirrorTrace(trace: SessionTrace): void {
+    if (!this.obsidianDb) return;
+    void this.obsidianDb.writeTrace(trace).catch(() => {});
+  }
+}
+
+function traceUpdatedAt(trace: SessionTrace): string {
+  return trace.endedAt ?? trace.steps[trace.steps.length - 1]?.timestamp ?? trace.startedAt;
 }

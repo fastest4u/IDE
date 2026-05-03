@@ -11,7 +11,15 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx src/smoke-test.ts"
+    "test": "tsx src/smoke-test.ts",
+    "test:production-safety": "tsx src/tests/production-safety.test.ts",
+    "test:crash-recovery": "tsx src/tests/crash-recovery.test.ts",
+    "test:approval-recovery": "tsx src/tests/approval-recovery.test.ts",
+    "test:all": "tsx src/tests/test-runner.ts",
+    "test:workflow-approval-recovery": "tsx src/tests/workflow-approval-recovery.test.ts",
+    "test:patch-recovery": "tsx src/tests/patch-recovery.test.ts",
+    "test:terminal-recovery": "tsx src/tests/terminal-recovery.test.ts",
+    "test:recovery": "pnpm run test:production-safety && pnpm run test:crash-recovery && pnpm run test:approval-recovery && pnpm run test:workflow-approval-recovery && pnpm run test:patch-recovery && pnpm run test:terminal-recovery"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",

@@ -41,20 +41,22 @@ export const registerSessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = a
   app.post('/sessions/:sessionId/decision', async (request, reply) => {
     const { sessionId } = request.params as { sessionId: string };
     const { decision } = request.body as { decision: string };
-    if (!decision) {
-      return reply.code(400).send({ message: 'decision is required' });
+    const normalized = typeof decision === 'string' ? decision.trim() : '';
+    if (!normalized) {
+      return reply.code(400).send({ code: 'DECISION_REQUIRED', message: 'decision is required' });
     }
-    await controller.addDecision(sessionId, decision);
-    return { sessionId, decision };
+    await controller.addDecision(sessionId, normalized);
+    return { sessionId, decision: normalized };
   });
 
   app.post('/sessions/:sessionId/constraint', async (request, reply) => {
     const { sessionId } = request.params as { sessionId: string };
     const { constraint } = request.body as { constraint: string };
-    if (!constraint) {
-      return reply.code(400).send({ message: 'constraint is required' });
+    const normalized = typeof constraint === 'string' ? constraint.trim() : '';
+    if (!normalized) {
+      return reply.code(400).send({ code: 'CONSTRAINT_REQUIRED', message: 'constraint is required' });
     }
-    await controller.addConstraint(sessionId, constraint);
-    return { sessionId, constraint };
+    await controller.addConstraint(sessionId, normalized);
+    return { sessionId, constraint: normalized };
   });
 };

@@ -1,8 +1,12 @@
 import { type FastifyPluginAsync, type FastifyRequest } from 'fastify';
+import type { AIController } from '../controller';
 import { TerminalSessionService } from '../terminal/terminal-session';
+import type { ToolApprovalService } from '../tool-approvals';
 
 export interface TerminalRouteOptions {
   terminalService: TerminalSessionService;
+  controller?: Pick<AIController, 'checkPermission'>;
+  approvalService?: ToolApprovalService;
 }
 
 interface CreateSessionBody {
@@ -20,17 +24,66 @@ function isSafeCommand(command: string): boolean {
   return !/[\0\r\u2028\u2029]/.test(trimmed);
 }
 
+function terminalPermissionError(
+  controller: TerminalRouteOptions['controller'],
+  command?: string,
+): { statusCode: 403 | 409; code: string; message: string; requiresApproval: boolean } | null {
+  if (!controller) return null;
+  const permission = command
+    ? controller.checkPermission('bash', command)
+    : controller.checkPermission('bash');
+  if (permission.denied) {
+    return {
+      statusCode: 403,
+      code: 'TERMINAL_COMMAND_DENIED',
+      message: 'Terminal command is denied by policy',
+      requiresApproval: false,
+    };
+  }
+  if (permission.requiresAsk) {
+    return {
+      statusCode: 409,
+      code: 'TERMINAL_COMMAND_REQUIRES_APPROVAL',
+      message: 'Terminal command requires approval by policy before execution',
+      requiresApproval: true,
+    };
+  }
+  return null;
+}
+
 export const registerTerminalRoutes: FastifyPluginAsync<TerminalRouteOptions> = async (app, opts) => {
-  const { terminalService } = opts;
+  const { terminalService, controller, approvalService } = opts;
 
   app.post('/terminal/exec', async (request: FastifyRequest<{ Body: CreateSessionBody }>, reply) => {
     const { command } = request.body ?? {};
     if (!command?.trim() || !isSafeCommand(command)) {
       return reply.status(400).send({ error: 'Command is required and must be safe' });
     }
+    const normalizedCommand = command.trim();
+    const permissionError = terminalPermissionError(controller, normalizedCommand);
+    if (permissionError) {
+      if (permissionError.requiresApproval && approvalService) {
+        const approval = await approvalService.create({
+          tool: 'terminal',
+          action: 'terminal.exec',
+          summary: `Run terminal command: ${normalizedCommand}`,
+          command: normalizedCommand,
+          cwd: terminalService.getWorkspaceRoot(),
+        });
+        return reply.status(202).send({
+          code: permissionError.code,
+          error: permissionError.message,
+          approval,
+        });
+      }
+      return reply.status(permissionError.statusCode).send({
+        code: permissionError.code,
+        error: permissionError.message,
+      });
+    }
 
     try {
-      const session = terminalService.createSession(command.trim());
+      const session = terminalService.createSession(normalizedCommand);
       return reply.status(201).send({ session: session.getInfo() });
     } catch (err) {
       return reply.status(400).send({ error: err instanceof Error ? err.message : 'Failed to create terminal session' });
@@ -95,7 +148,7 @@ export const registerTerminalRoutes: FastifyPluginAsync<TerminalRouteOptions> = 
   );
 
   app.get('/terminal/output', async (_request, reply) => {
-    return reply.send({ output: terminalService.getAllOutput() });
+    return reply.send({ output: terminalService.getAllOutput(), sessions: terminalService.listSessions() });
   });
 
   app.post<{ Params: { sessionId: string }; Body: WriteBody }>(
@@ -110,6 +163,13 @@ export const registerTerminalRoutes: FastifyPluginAsync<TerminalRouteOptions> = 
 
       if (!data || data.length > 4096) {
         return reply.status(400).send({ error: 'Input data is required and must be under 4096 characters' });
+      }
+      const permissionError = terminalPermissionError(controller);
+      if (permissionError) {
+        return reply.status(permissionError.statusCode).send({
+          code: permissionError.code,
+          error: permissionError.message,
+        });
       }
 
       session.write(data);
@@ -141,13 +201,35 @@ export const registerTerminalRoutes: FastifyPluginAsync<TerminalRouteOptions> = 
         return reply.status(404).send({ error: 'Terminal session not found' });
       }
 
-      if (existing) {
-        existing.kill();
-      }
-
       const cmd = command?.trim() ?? existing?.command;
       if (!cmd || !isSafeCommand(cmd)) {
         return reply.status(400).send({ error: 'Command is required to restart and must be safe' });
+      }
+      const permissionError = terminalPermissionError(controller, cmd);
+      if (permissionError) {
+        if (permissionError.requiresApproval && approvalService) {
+          const approval = await approvalService.create({
+            tool: 'terminal',
+            action: 'terminal.restart',
+            summary: `Restart terminal command: ${cmd}`,
+            command: cmd,
+            cwd: terminalService.getWorkspaceRoot(),
+            targetSessionId: existing?.id ?? sessionId,
+          });
+          return reply.status(202).send({
+            code: permissionError.code,
+            error: permissionError.message,
+            approval,
+          });
+        }
+        return reply.status(permissionError.statusCode).send({
+          code: permissionError.code,
+          error: permissionError.message,
+        });
+      }
+
+      if (existing) {
+        existing.kill();
       }
 
       try {
