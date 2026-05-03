@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { AIController } from '../controller';
 import { WorkspaceFileError } from '../memory/workspace-context';
 import type { PatchService } from '../patches';
+import type { ToolApprovalService } from '../tool-approvals';
 import type { TerminalSessionService } from '../terminal/terminal-session';
 import type { WorkspacePickerService } from '../workspace-picker';
 import { WorkspacePickerError } from '../workspace-picker';
@@ -12,6 +13,7 @@ import { WorkspacePathError } from '../workspace-writer';
 interface WorkspaceRoutesOptions {
   controller: AIController;
   patchService?: PatchService;
+  approvalService?: ToolApprovalService;
   terminalService?: TerminalSessionService;
   workspacePicker?: WorkspacePickerService;
 }
@@ -108,7 +110,10 @@ export const registerWorkspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions>
       await controller.setWorkspaceRoot(rootDir);
       const normalizedRootDir = controller.getWorkspaceRoot() ?? rootDir;
       options.patchService?.setWorkspaceRoot(normalizedRootDir);
+      options.approvalService?.setWorkspaceRoot(normalizedRootDir);
       options.terminalService?.setWorkspaceRoot(normalizedRootDir);
+      await options.approvalService?.hydrateFromObsidian();
+      await controller.hydrateObsidianDatabase();
       const summary = await controller.getWorkspaceSummary();
       const files = await controller.getWorkspaceFiles();
       return { rootDir: normalizedRootDir, summary, fileCount: files.length };

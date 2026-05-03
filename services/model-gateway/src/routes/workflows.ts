@@ -95,6 +95,9 @@ export const registerWorkflowRoutes: FastifyPluginAsync<WorkflowRoutesOptions> =
   app.post('/workflows/runs/:runId/approve', async (request, reply) => {
     const { runId } = request.params as { runId: string };
     const body = (request.body ?? {}) as Partial<WorkflowApprovalDecision>;
+    if (typeof body.nodeId !== 'string' || !body.nodeId.trim()) {
+      return reply.code(400).send({ code: 'NODE_ID_REQUIRED', message: 'nodeId is required for approval' });
+    }
 
     try {
       const run = await controller.approveWorkflowRun(runId, body.nodeId, body.reason);
@@ -110,6 +113,9 @@ export const registerWorkflowRoutes: FastifyPluginAsync<WorkflowRoutesOptions> =
   app.post('/workflows/runs/:runId/reject', async (request, reply) => {
     const { runId } = request.params as { runId: string };
     const body = (request.body ?? {}) as Partial<WorkflowApprovalDecision>;
+    if (typeof body.nodeId !== 'string' || !body.nodeId.trim()) {
+      return reply.code(400).send({ code: 'NODE_ID_REQUIRED', message: 'nodeId is required for rejection' });
+    }
 
     try {
       const run = await controller.rejectWorkflowRun(runId, body.nodeId, body.reason);

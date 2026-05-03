@@ -8,9 +8,12 @@ import type {
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
+import type { ObsidianDatabaseService } from '../obsidian-database';
+
 interface SessionStoreOptions {
   persistenceFilePath?: string;
   persist?: boolean;
+  obsidianDb?: ObsidianDatabaseService;
 }
 
 const MAX_DECISIONS = 50;
@@ -25,6 +28,24 @@ export class InMemorySessionStore implements SessionMemoryStore {
   private loaded = false;
 
   constructor(private readonly options: SessionStoreOptions = {}) {}
+
+  async hydrateFromObsidian(): Promise<void> {
+    await this.load();
+    if (!this.options.obsidianDb) return;
+    const states = await this.options.obsidianDb.readTaskStates();
+    let changed = false;
+    for (const state of states) {
+      const normalized = normalizeTaskState(state);
+      const existing = this.sessions.get(normalized.sessionId);
+      if (!existing || normalized.updatedAt.localeCompare(existing.updatedAt) > 0) {
+        this.sessions.set(normalized.sessionId, normalized);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await this.persist();
+    }
+  }
 
   async getTaskState(sessionId: string): Promise<TaskState | null> {
     await this.load();
@@ -51,6 +72,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
     };
     this.sessions.set(sessionId, state);
     await this.persist();
+    await this.mirrorTaskState(state);
     return state;
   }
 
@@ -67,6 +89,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
     state.decisions.splice(0, Math.max(0, state.decisions.length - MAX_DECISIONS));
     this.touch(sessionId);
     await this.persist();
+    await this.mirrorTaskState(state);
   }
 
   async addConstraint(sessionId: string, constraint: string): Promise<void> {
@@ -77,6 +100,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
     state.constraints.splice(0, Math.max(0, state.constraints.length - MAX_CONSTRAINTS));
     this.touch(sessionId);
     await this.persist();
+    await this.mirrorTaskState(state);
   }
 
   async addPatchRecord(sessionId: string, patch: PatchMemory): Promise<void> {
@@ -93,16 +117,21 @@ export class InMemorySessionStore implements SessionMemoryStore {
     state.patches.splice(0, Math.max(0, state.patches.length - MAX_PATCHES));
     this.touch(sessionId);
     await this.persist();
+    await this.mirrorPatchMemory(sessionId, normalized);
+    await this.mirrorTaskState(state);
   }
 
   async addMemory(sessionId: string, record: MemoryRecord): Promise<void> {
     await this.load();
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    state.memory.push(normalizeMemoryRecord(record));
+    const normalized = normalizeMemoryRecord(record);
+    state.memory.push(normalized);
     state.memory.splice(0, Math.max(0, state.memory.length - MAX_MEMORY));
     this.touch(sessionId);
     await this.persist();
+    await this.mirrorMemoryRecord(normalized);
+    await this.mirrorTaskState(state);
   }
 
   async recordProviderUsage(
@@ -116,6 +145,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
     state.providerUsage.splice(0, Math.max(0, state.providerUsage.length - MAX_PROVIDER_USAGE));
     this.touch(sessionId);
     await this.persist();
+    await this.mirrorTaskState(state);
   }
 
   async updateHandoffSummary(sessionId: string, summary: string): Promise<void> {
@@ -125,6 +155,7 @@ export class InMemorySessionStore implements SessionMemoryStore {
     state.lastHandoffSummary = sanitizeText(summary);
     this.touch(sessionId);
     await this.persist();
+    await this.mirrorTaskState(state);
   }
 
   async getHandoffSummary(sessionId: string): Promise<string> {
@@ -167,6 +198,27 @@ export class InMemorySessionStore implements SessionMemoryStore {
       `${JSON.stringify({ sessions: [...this.sessions.values()] }, null, 2)}\n`,
       'utf8',
     );
+  }
+
+  private async mirrorTaskState(state: TaskState): Promise<void> {
+    if (!this.options.obsidianDb) return;
+    try {
+      await this.options.obsidianDb.writeTaskState(state);
+    } catch {}
+  }
+
+  private async mirrorPatchMemory(sessionId: string, patch: PatchMemory): Promise<void> {
+    if (!this.options.obsidianDb) return;
+    try {
+      await this.options.obsidianDb.writePatchMemory(sessionId, patch);
+    } catch {}
+  }
+
+  private async mirrorMemoryRecord(record: MemoryRecord): Promise<void> {
+    if (!this.options.obsidianDb) return;
+    try {
+      await this.options.obsidianDb.writeMemoryRecord(record);
+    } catch {}
   }
 }
 

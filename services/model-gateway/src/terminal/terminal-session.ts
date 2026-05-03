@@ -108,6 +108,13 @@ export class TerminalSession extends EventEmitter {
     return this._exitCode;
   }
 
+  get exitedAt(): string | null {
+    return this._exitedAt;
+  }
+
+  /**
+   * Backward-compatible alias for the typo that existed in earlier builds.
+   */
   get exittedAt(): string | null {
     return this._exitedAt;
   }

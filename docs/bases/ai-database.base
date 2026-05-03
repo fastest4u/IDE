@@ -1,0 +1,209 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - or:
+        - 'file.hasTag("ai/database")'
+        - 'file.inFolder("docs/memory/database")'
+
+formulas:
+  type_label: 'if(type, type, "database-record")'
+  status_label: 'if(status, status, "none")'
+  updated_label: 'if(updated, date(updated).format("YYYY-MM-DD HH:mm"), file.mtime.format("YYYY-MM-DD HH:mm"))'
+  age_days: 'if(created, (now() - date(created)).days.round(0), (now() - file.ctime).days.round(0))'
+  session_link: 'if(sessionId, link("docs/memory/database/sessions/" + sessionId + ".md", sessionId), "")'
+  approval_action: 'if(action, action, "")'
+  workflow_label: 'if(workflowId, workflowId, "")'
+
+properties:
+  title:
+    displayName: "Title"
+  type:
+    displayName: "Type"
+  status:
+    displayName: "Status"
+  collection:
+    displayName: "Collection"
+  sessionId:
+    displayName: "Session ID"
+  approvalId:
+    displayName: "Approval ID"
+  patchId:
+    displayName: "Patch ID"
+  runId:
+    displayName: "Run ID"
+  workflowId:
+    displayName: "Workflow ID"
+  action:
+    displayName: "Action"
+  tool:
+    displayName: "Tool"
+  command:
+    displayName: "Command"
+  filePath:
+    displayName: "File"
+  created:
+    displayName: "Created"
+  updated:
+    displayName: "Updated"
+  formula.type_label:
+    displayName: "Type"
+  formula.status_label:
+    displayName: "Status"
+  formula.updated_label:
+    displayName: "Updated"
+  formula.age_days:
+    displayName: "Age Days"
+  formula.session_link:
+    displayName: "Session"
+  formula.approval_action:
+    displayName: "Action"
+  formula.workflow_label:
+    displayName: "Workflow"
+
+views:
+  - type: table
+    name: "Pending Approvals"
+    filters:
+      and:
+        - 'type == "tool-approval"'
+        - 'status == "pending"'
+    order:
+      - file.name
+      - title
+      - formula.approval_action
+      - tool
+      - command
+      - formula.updated_label
+      - formula.age_days
+    groupBy:
+      property: formula.approval_action
+      direction: ASC
+
+  - type: table
+    name: "Approval Audit"
+    filters:
+      and:
+        - 'type == "tool-approval"'
+    order:
+      - file.name
+      - approvalId
+      - formula.approval_action
+      - formula.status_label
+      - tool
+      - command
+      - formula.updated_label
+    groupBy:
+      property: formula.status_label
+      direction: ASC
+
+  - type: table
+    name: "Agent Sessions"
+    filters:
+      and:
+        - 'type == "agent-session"'
+    order:
+      - file.name
+      - title
+      - sessionId
+      - formula.status_label
+      - decisionCount
+      - constraintCount
+      - patchCount
+      - memoryCount
+      - providerUsageCount
+      - formula.updated_label
+    groupBy:
+      property: formula.status_label
+      direction: ASC
+
+  - type: table
+    name: "Patch Audit"
+    filters:
+      and:
+        - 'type == "patch-memory"'
+    order:
+      - file.name
+      - patchId
+      - formula.status_label
+      - filePath
+      - formula.session_link
+      - formula.updated_label
+    groupBy:
+      property: formula.status_label
+      direction: ASC
+
+  - type: table
+    name: "Memory Records"
+    filters:
+      and:
+        - 'type == "memory-record"'
+    order:
+      - file.name
+      - memoryId
+      - kind
+      - source
+      - formula.session_link
+      - formula.updated_label
+    groupBy:
+      property: kind
+      direction: ASC
+
+  - type: table
+    name: "Session Traces"
+    filters:
+      and:
+        - 'type == "session-trace"'
+    order:
+      - file.name
+      - sessionId
+      - agentId
+      - formula.status_label
+      - totalSteps
+      - totalTokens
+      - toolCalls
+      - errors
+      - retries
+      - formula.updated_label
+    groupBy:
+      property: formula.status_label
+      direction: ASC
+
+  - type: table
+    name: "Workflow Runs"
+    filters:
+      and:
+        - 'type == "workflow-run"'
+    order:
+      - file.name
+      - runId
+      - formula.workflow_label
+      - collaborationId
+      - formula.status_label
+      - pausedAtNodeId
+      - nodeCount
+      - outputCount
+      - formula.updated_label
+    groupBy:
+      property: formula.status_label
+      direction: ASC
+
+  - type: cards
+    name: "Recent Records"
+    limit: 30
+    order:
+      - file.name
+      - title
+      - formula.type_label
+      - formula.status_label
+      - formula.updated_label
+
+  - type: table
+    name: "All Database Records"
+    order:
+      - file.name
+      - title
+      - formula.type_label
+      - formula.status_label
+      - collection
+      - formula.updated_label
+      - file.links

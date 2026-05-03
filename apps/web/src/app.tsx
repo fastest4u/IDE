@@ -19,6 +19,8 @@ import type {
   PatchRecord,
   ProviderId,
   ProviderRuntimeStatus,
+  ToolApprovalRecord,
+  WorkflowRunState,
 } from '@ide/protocol';
 
 import './styles.css';
@@ -30,9 +32,12 @@ import {
   listTraces,
   activateAgent,
   approvePatch,
+  approveToolApproval,
   applyPatch,
   listPatches,
+  listToolApprovals,
   rejectPatch,
+  rejectToolApproval,
   reviewPatch,
   runCollaboration,
   saveAgent,
@@ -190,6 +195,16 @@ function usePatchesQuery() {
     queryKey: ['patches'],
     queryFn: listPatches,
     staleTime: 5_000,
+  });
+}
+
+function useToolApprovalsQuery(enabled: boolean) {
+  return useQuery({
+    queryKey: ['tool-approvals'],
+    queryFn: () => listToolApprovals(),
+    enabled,
+    staleTime: 5_000,
+    refetchInterval: enabled ? 5_000 : false,
   });
 }
 
@@ -640,6 +655,7 @@ function AgentManagerModal({
   providerStatuses,
   traces,
   patches,
+  toolApprovals,
   workspaceFiles,
   workspaceRoot,
   workspaceSummary,
@@ -660,6 +676,7 @@ function AgentManagerModal({
   lastCollaboration,
   collaborationError,
   patchActionPendingId,
+  toolApprovalActionPendingId,
   onCollaborationGoalChange,
   onObsidianSearchQueryChange,
   onSearchObsidian,
@@ -673,6 +690,8 @@ function AgentManagerModal({
   onApprovePatch,
   onRejectPatch,
   onApplyPatch,
+  onApproveToolApproval,
+  onRejectToolApproval,
   onClose,
 }: {
   agents: AgentDefinition[];
@@ -680,6 +699,7 @@ function AgentManagerModal({
   providerStatuses: ProviderRuntimeStatus[];
   traces: SessionTrace[];
   patches: PatchRecord[];
+  toolApprovals: ToolApprovalRecord[];
   workspaceFiles: string[];
   workspaceRoot: string;
   workspaceSummary?: string;
@@ -700,6 +720,7 @@ function AgentManagerModal({
   lastCollaboration: CollaborationResponse | null;
   collaborationError: string | null;
   patchActionPendingId: string | null;
+  toolApprovalActionPendingId: string | null;
   onCollaborationGoalChange: (goal: string) => void;
   onObsidianSearchQueryChange: (query: string) => void;
   onSearchObsidian: () => void;
@@ -713,6 +734,8 @@ function AgentManagerModal({
   onApprovePatch: (patchId: string) => void;
   onRejectPatch: (patchId: string) => void;
   onApplyPatch: (patchId: string) => void;
+  onApproveToolApproval: (approvalId: string) => void;
+  onRejectToolApproval: (approvalId: string) => void;
   onClose: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<AgentPlatformTab>('Dashboard');
@@ -728,6 +751,7 @@ function AgentManagerModal({
   const healthyProviders = providerStatuses.filter((provider) => provider.enabled && provider.healthy).length;
   const pendingPatches = patches.filter((patch) => patch.status === 'pending');
   const approvalPatches = patches.filter((patch) => patch.status === 'pending' || patch.status === 'approved');
+  const pendingToolApprovals = toolApprovals.filter((approval) => approval.status === 'pending');
   const latestTrace = traces[0];
   const executionWaves = (lastCollaboration?.metadata?.executionWaves as string[][] | undefined) ?? [
     ['planner', 'context_curator'],
@@ -1455,8 +1479,40 @@ function AgentManagerModal({
           {activeTab === 'Approvals' && (
             <section className="app-shell__manager-panel">
               <h3>Approval Queue</h3>
-              {!approvalPatches.length && <div className="app-shell__empty-list">No risky action is waiting for approval.</div>}
+              {!approvalPatches.length && !pendingToolApprovals.length && <div className="app-shell__empty-list">No risky action is waiting for approval.</div>}
               <div className="app-shell__approval-list">
+                {pendingToolApprovals.map((approval) => (
+                  <article key={approval.id}>
+                    <div className="app-shell__approval-row-head">
+                      <strong>{approval.summary}</strong>
+                      <span>{approval.status}</span>
+                    </div>
+                    <p>{approval.command ?? approval.action}</p>
+                    <div className="app-shell__approval-meta">
+                      <span>{approval.tool}</span>
+                      <span>{approval.action}</span>
+                      {approval.cwd && <span>{approval.cwd}</span>}
+                    </div>
+                    <div className="app-shell__approval-actions">
+                      <button
+                        type="button"
+                        className="app-shell__connect-primary-button"
+                        disabled={toolApprovalActionPendingId === approval.id}
+                        onClick={() => onApproveToolApproval(approval.id)}
+                      >
+                        Approve & Run
+                      </button>
+                      <button
+                        type="button"
+                        className="app-shell__provider-connect-button"
+                        disabled={toolApprovalActionPendingId === approval.id}
+                        onClick={() => onRejectToolApproval(approval.id)}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </article>
+                ))}
                 {approvalPatches.map((patch) => (
                   <article key={patch.id}>
                     <div className="app-shell__approval-row-head">
@@ -1519,6 +1575,7 @@ export function AppShell() {
   const hasExplicitWorkspaceSelection = requestedWorkspaceRoot.trim().length > 0;
   const workspaceQuery = useWorkspaceQuery(hasExplicitWorkspaceSelection);
   const patchesQuery = usePatchesQuery();
+  const toolApprovalsQuery = useToolApprovalsQuery(true);
   const tracesQuery = useTracesQuery(hasExplicitWorkspaceSelection);
   const obsidianMemoryStatsQuery = useObsidianMemoryStatsQuery(hasExplicitWorkspaceSelection);
   const workflowsQuery = useWorkflowsQuery(hasExplicitWorkspaceSelection);
@@ -1535,6 +1592,12 @@ export function AppShell() {
       if (action === 'approve') return approvePatch(patchId);
       if (action === 'reject') return rejectPatch(patchId);
       return applyPatch(patchId);
+    },
+  });
+  const toolApprovalActionMutation = useMutation({
+    mutationFn: async ({ approvalId, action }: { approvalId: string; action: 'approve' | 'reject' }) => {
+      if (action === 'approve') return approveToolApproval(approvalId, 'Approved from Agent Manager');
+      return rejectToolApproval(approvalId, 'Rejected from Agent Manager');
     },
   });
   const obsidianSearchMutation = useMutation({ mutationFn: searchObsidianMemory });
@@ -1582,6 +1645,7 @@ export function AppShell() {
   const [obsidianSearchQuery, setObsidianSearchQuery] = useState('');
   const [obsidianSearchResults, setObsidianSearchResults] = useState<ObsidianNoteSummary[]>([]);
   const [patchActionPendingId, setPatchActionPendingId] = useState<string | null>(null);
+  const [toolApprovalActionPendingId, setToolApprovalActionPendingId] = useState<string | null>(null);
   const [testingProviderId, setTestingProviderId] = useState<ProviderId | null>(null);
   const [openTabsState, setOpenTabsState] = useState<OpenTab[]>([]);
   const workspaceSyncRef = useRef<string | null>(null);
@@ -1681,6 +1745,7 @@ export function AppShell() {
   const gitDiff = '';
   const diagnostics = workspaceQuery.data?.diagnostics ?? [];
   const patchCards = patchesQuery.data ?? [];
+  const toolApprovals = toolApprovalsQuery.data ?? [];
   const traces = tracesQuery.data ?? [];
   const providerStatuses = providerStatusQuery.data?.providers ?? [];
   const workspaceFiles = workspaceQuery.data?.files ?? [];
@@ -1958,6 +2023,7 @@ export function AppShell() {
       setIsStreaming(false);
       await queryClient.invalidateQueries({ queryKey: ['workspace', 'active'] });
       await queryClient.invalidateQueries({ queryKey: ['patches'] });
+      await queryClient.invalidateQueries({ queryKey: ['tool-approvals'] });
       await queryClient.invalidateQueries({ queryKey: ['trace', 'sessions'] });
     }
   };
@@ -1986,6 +2052,7 @@ export function AppShell() {
       }]);
       await queryClient.invalidateQueries({ queryKey: ['trace', 'sessions'] });
       await queryClient.invalidateQueries({ queryKey: ['patches'] });
+      await queryClient.invalidateQueries({ queryKey: ['tool-approvals'] });
     } catch (err) {
       setCollaborationError(err instanceof Error ? err.message : 'Multi-agent collaboration failed.');
     }
@@ -1999,6 +2066,18 @@ export function AppShell() {
       await queryClient.invalidateQueries({ queryKey: ['trace', 'sessions'] });
     } finally {
       setPatchActionPendingId(null);
+    }
+  };
+
+  const handleToolApprovalAction = async (approvalId: string, action: 'approve' | 'reject') => {
+    setToolApprovalActionPendingId(approvalId);
+    try {
+      await toolApprovalActionMutation.mutateAsync({ approvalId, action });
+      await queryClient.invalidateQueries({ queryKey: ['tool-approvals'] });
+      await queryClient.invalidateQueries({ queryKey: ['terminal'] });
+      await queryClient.invalidateQueries({ queryKey: ['trace', 'sessions'] });
+    } finally {
+      setToolApprovalActionPendingId(null);
     }
   };
 
@@ -2387,6 +2466,7 @@ export function AppShell() {
               providerStatuses={providerStatuses}
               traces={traces}
               patches={patchCards}
+              toolApprovals={toolApprovals}
               workspaceFiles={workspaceFiles}
               workspaceRoot={workspaceRoot}
               workspaceSummary={workspaceQuery.data?.summary}
@@ -2407,6 +2487,7 @@ export function AppShell() {
               lastCollaboration={lastCollaboration}
               collaborationError={collaborationError}
               patchActionPendingId={patchActionPendingId}
+              toolApprovalActionPendingId={toolApprovalActionPendingId}
               onCollaborationGoalChange={setCollaborationGoal}
               onObsidianSearchQueryChange={setObsidianSearchQuery}
               onSearchObsidian={() => void handleSearchObsidian()}
@@ -2420,6 +2501,8 @@ export function AppShell() {
               onApprovePatch={(patchId) => void handlePatchAction(patchId, 'approve')}
               onRejectPatch={(patchId) => void handlePatchAction(patchId, 'reject')}
               onApplyPatch={(patchId) => void handlePatchAction(patchId, 'apply')}
+              onApproveToolApproval={(approvalId) => void handleToolApprovalAction(approvalId, 'approve')}
+              onRejectToolApproval={(approvalId) => void handleToolApprovalAction(approvalId, 'reject')}
               onClose={() => setIsAgentManagerOpen(false)}
             />
           )}

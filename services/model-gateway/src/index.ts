@@ -16,6 +16,8 @@ export * from './memory/workspace-context';
 export * from './patches';
 export * from './workspace-writer';
 export * from './settings';
+export * from './tool-approvals';
+export * from './obsidian-database';
 export * from './telemetry/metrics';
 export * from './telemetry/usage-log';
 export * from './cache';

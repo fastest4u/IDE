@@ -5,3 +5,5 @@ export * from './memory';
 export * from './patch';
 export * from './collaboration';
 export * from './settings';
+export * from './tool-approval';
+export * from './agent-run';

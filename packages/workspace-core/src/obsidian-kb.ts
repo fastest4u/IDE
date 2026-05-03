@@ -22,6 +22,35 @@ export interface ObsidianNote {
   category: string;
 }
 
+export interface ObsidianChunk {
+  id: string;
+  notePath: string;
+  title: string;
+  heading: string;
+  tags: string[];
+  aliases: string[];
+  content: string;
+  excerpt: string;
+  startLine: number;
+  endLine: number;
+  links: string[];
+  category: string;
+  updatedAt: string;
+  tokenCount: number;
+}
+
+export interface ObsidianRAGResult {
+  chunk: ObsidianChunk;
+  score: number;
+  reasons: string[];
+  citation: {
+    path: string;
+    title: string;
+    heading: string;
+    lines: [number, number];
+  };
+}
+
 export interface ObsidianKBQuery {
   /** Search terms */
   query: string;
@@ -31,6 +60,10 @@ export interface ObsidianKBQuery {
   category?: string;
   /** Max results */
   limit?: number;
+}
+
+export interface ObsidianRAGQuery extends ObsidianKBQuery {
+  minScore?: number;
 }
 
 export interface ObsidianKBOptions {
@@ -44,6 +77,7 @@ export interface ObsidianKBOptions {
 export class ObsidianKnowledgeBase {
   private workspaceRoot: string;
   private notes: Map<string, ObsidianNote> = new Map();
+  private chunks: Map<string, ObsidianChunk> = new Map();
   private indexBuilt = false;
   private readonly excludeDirs: string[];
   private readonly includePatterns: string[];
@@ -60,11 +94,13 @@ export class ObsidianKnowledgeBase {
   setWorkspaceRoot(root: string): void {
     this.workspaceRoot = root;
     this.notes.clear();
+    this.chunks.clear();
     this.indexBuilt = false;
   }
 
   async buildIndex(): Promise<number> {
     this.notes.clear();
+    this.chunks.clear();
     await this.scanDirectory(this.workspaceRoot);
     this.indexBuilt = true;
     return this.notes.size;
@@ -91,6 +127,9 @@ export class ObsidianKnowledgeBase {
             const note = this.parseNote(fullPath);
             if (note) {
               this.notes.set(note.path, note);
+              for (const chunk of chunkNote(note)) {
+                this.chunks.set(chunk.id, chunk);
+              }
             }
           } catch {
             // skip unreadable files
@@ -258,6 +297,39 @@ export class ObsidianKnowledgeBase {
       .map((s) => s.note);
   }
 
+  retrieve(query: ObsidianRAGQuery): ObsidianRAGResult[] {
+    const { query: q, tags, category, limit = 8, minScore = 0.05 } = query;
+    const terms = tokenize(q);
+    if (!terms.length) return [];
+
+    const queryVector = termVector(terms);
+    const scored: ObsidianRAGResult[] = [];
+
+    for (const chunk of this.chunks.values()) {
+      if (tags && !tags.some((tag) => chunk.tags.includes(tag))) continue;
+      if (category && chunk.category !== category) continue;
+
+      const { score, reasons } = scoreChunk(q, terms, queryVector, chunk);
+      if (score >= minScore) {
+        scored.push({
+          chunk,
+          score,
+          reasons,
+          citation: {
+            path: chunk.notePath,
+            title: chunk.title,
+            heading: chunk.heading,
+            lines: [chunk.startLine, chunk.endLine],
+          },
+        });
+      }
+    }
+
+    return scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+
   getNote(relativePath: string): ObsidianNote | null {
     return this.notes.get(relativePath) ?? null;
   }
@@ -290,6 +362,11 @@ export class ObsidianKnowledgeBase {
   }
 
   buildKnowledgeContext(query: string, maxNotes = 5): string {
+    const ragResults = this.retrieve({ query, limit: maxNotes });
+    if (ragResults.length > 0) {
+      return this.buildRagContext(query, maxNotes);
+    }
+
     const results = this.search({ query, limit: maxNotes });
     if (results.length === 0) return '';
 
@@ -310,7 +387,26 @@ export class ObsidianKnowledgeBase {
     return parts.join('\n');
   }
 
-  getStats(): { total: number; byCategory: Record<string, number>; tags: string[] } {
+  buildRagContext(query: string, maxChunks = 8): string {
+    const results = this.retrieve({ query, limit: maxChunks });
+    if (!results.length) return '';
+
+    const parts: string[] = ['\n<knowledge-base source="obsidian-rag" retrieval="hybrid-local" trust="untrusted">'];
+
+    for (const result of results) {
+      const { chunk, citation } = result;
+      const tagStr = chunk.tags.length > 0 ? ` tags="${chunk.tags.slice(0, 8).join(',')}"` : '';
+      parts.push(`<chunk id="${escapeXml(chunk.id)}" score="${result.score.toFixed(3)}" path="${escapeXml(citation.path)}" lines="${citation.lines[0]}-${citation.lines[1]}" heading="${escapeXml(citation.heading)}"${tagStr}>`);
+      parts.push(chunk.content);
+      parts.push('</chunk>');
+      parts.push('');
+    }
+
+    parts.push('</knowledge-base>');
+    return parts.join('\n');
+  }
+
+  getStats(): { total: number; chunks: number; byCategory: Record<string, number>; tags: string[] } {
     const byCategory: Record<string, number> = {};
     const tagSet = new Set<string>();
 
@@ -323,8 +419,247 @@ export class ObsidianKnowledgeBase {
 
     return {
       total: this.notes.size,
+      chunks: this.chunks.size,
       byCategory,
       tags: [...tagSet].sort(),
     };
   }
 }
+
+const MAX_CHUNK_CHARS = 1200;
+const CHUNK_OVERLAP_CHARS = 180;
+
+function chunkNote(note: ObsidianNote): ObsidianChunk[] {
+  const sections = splitMarkdownSections(note.content);
+  const chunks: ObsidianChunk[] = [];
+  let chunkIndex = 0;
+
+  for (const section of sections) {
+    const parts = splitSectionText(section.text, MAX_CHUNK_CHARS, CHUNK_OVERLAP_CHARS);
+    for (const part of parts) {
+      const content = part.text.trim();
+      if (!content) continue;
+      const startLine = section.startLine + part.startLineOffset;
+      const endLine = Math.max(startLine, startLine + content.split('\n').length - 1);
+      chunks.push({
+        id: `${slugifyPath(note.path)}:${chunkIndex++}`,
+        notePath: note.path,
+        title: note.title,
+        heading: section.heading,
+        tags: note.tags,
+        aliases: note.aliases,
+        content,
+        excerpt: content.replace(/\s+/g, ' ').slice(0, 240),
+        startLine,
+        endLine,
+        links: note.links,
+        category: note.category,
+        updatedAt: note.updatedAt,
+        tokenCount: tokenize(content).length,
+      });
+    }
+  }
+
+  return chunks;
+}
+
+function splitMarkdownSections(content: string): Array<{ heading: string; startLine: number; text: string }> {
+  const lines = content.split('\n');
+  const sections: Array<{ heading: string; startLine: number; lines: string[] }> = [];
+  let current: { heading: string; startLine: number; lines: string[] } = {
+    heading: 'Overview',
+    startLine: 1,
+    lines: [],
+  };
+
+  for (const [index, line] of lines.entries()) {
+    const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
+    if (headingMatch && current.lines.some((item) => item.trim())) {
+      sections.push(current);
+      current = {
+        heading: headingMatch[2]?.trim() || 'Section',
+        startLine: index + 1,
+        lines: [line],
+      };
+      continue;
+    }
+
+    if (headingMatch && !current.lines.some((item) => item.trim())) {
+      current.heading = headingMatch[2]?.trim() || 'Section';
+      current.startLine = index + 1;
+    }
+    current.lines.push(line);
+  }
+
+  if (current.lines.some((item) => item.trim())) {
+    sections.push(current);
+  }
+
+  return sections.map((section) => ({
+    heading: section.heading,
+    startLine: section.startLine,
+    text: section.lines.join('\n'),
+  }));
+}
+
+function splitSectionText(text: string, maxChars: number, overlapChars: number): Array<{ text: string; startLineOffset: number }> {
+  if (text.length <= maxChars) {
+    return [{ text, startLineOffset: 0 }];
+  }
+
+  const chunks: Array<{ text: string; startLineOffset: number }> = [];
+  let cursor = 0;
+  let startLineOffset = 0;
+
+  while (cursor < text.length) {
+    const end = Math.min(text.length, cursor + maxChars);
+    const preferredEnd = end < text.length ? Math.max(
+      text.lastIndexOf('\n\n', end),
+      text.lastIndexOf('\n', end),
+      text.lastIndexOf('. ', end),
+    ) : end;
+    const chunkEnd = preferredEnd > cursor + maxChars * 0.45 ? preferredEnd : end;
+    const chunkText = text.slice(cursor, chunkEnd).trim();
+    if (chunkText) {
+      chunks.push({ text: chunkText, startLineOffset });
+    }
+    if (chunkEnd >= text.length) break;
+    const nextCursor = Math.max(0, chunkEnd - overlapChars);
+    startLineOffset = text.slice(0, nextCursor).split('\n').length - 1;
+    cursor = nextCursor;
+  }
+
+  return chunks;
+}
+
+function scoreChunk(
+  query: string,
+  terms: string[],
+  queryVector: Map<string, number>,
+  chunk: ObsidianChunk,
+): { score: number; reasons: string[] } {
+  const reasons: string[] = [];
+  const title = chunk.title.toLowerCase();
+  const heading = chunk.heading.toLowerCase();
+  const content = chunk.content.toLowerCase();
+  const metadata = `${chunk.tags.join(' ')} ${chunk.aliases.join(' ')}`.toLowerCase();
+  const normalizedQuery = query.toLowerCase().trim();
+  let score = 0;
+
+  if (normalizedQuery && content.includes(normalizedQuery)) {
+    score += 12;
+    reasons.push('exact phrase');
+  }
+
+  for (const term of terms) {
+    if (title.includes(term)) {
+      score += 6;
+      reasons.push(`title:${term}`);
+    }
+    if (heading.includes(term)) {
+      score += 5;
+      reasons.push(`heading:${term}`);
+    }
+    if (metadata.includes(term)) {
+      score += 4;
+      reasons.push(`metadata:${term}`);
+    }
+    const hits = countOccurrences(content, term);
+    if (hits > 0) {
+      score += Math.min(8, hits * 1.5);
+      reasons.push(`content:${term}`);
+    }
+  }
+
+  const vectorScore = cosineSimilarity(queryVector, termVector(tokenize(`${chunk.title} ${chunk.heading} ${chunk.tags.join(' ')} ${chunk.content}`)));
+  if (vectorScore > 0) {
+    score += vectorScore * 18;
+    reasons.push(`vector:${vectorScore.toFixed(2)}`);
+  }
+
+  const daysSinceUpdate = (Date.now() - new Date(chunk.updatedAt).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSinceUpdate < 30) score += 0.5;
+  if (daysSinceUpdate < 7) score += 0.5;
+
+  return { score, reasons: [...new Set(reasons)].slice(0, 8) };
+}
+
+function tokenize(value: string): string[] {
+  const normalized = value
+    .toLowerCase()
+    .replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
+    .replace(/[`*_>#()[\]{}.,:;!?'"|\\]/g, ' ');
+  const words = normalized.match(/[\p{L}\p{N}_/-]{2,}/gu) ?? [];
+  const compact = normalized.replace(/\s+/g, '');
+  const grams = compact.length >= 8 ? Array.from(characterNgrams(compact, 4)).slice(0, 80) : [];
+  return [...words, ...grams].filter((token) => !STOP_WORDS.has(token));
+}
+
+function termVector(tokens: string[]): Map<string, number> {
+  const vector = new Map<string, number>();
+  for (const token of tokens) {
+    vector.set(token, (vector.get(token) ?? 0) + 1);
+  }
+  return vector;
+}
+
+function cosineSimilarity(a: Map<string, number>, b: Map<string, number>): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (const value of a.values()) normA += value * value;
+  for (const value of b.values()) normB += value * value;
+  for (const [key, value] of a.entries()) {
+    dot += value * (b.get(key) ?? 0);
+  }
+  if (!normA || !normB) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function countOccurrences(value: string, term: string): number {
+  if (!term) return 0;
+  let count = 0;
+  let index = value.indexOf(term);
+  while (index !== -1 && count < 20) {
+    count++;
+    index = value.indexOf(term, index + term.length);
+  }
+  return count;
+}
+
+function* characterNgrams(value: string, size: number): Iterable<string> {
+  for (let index = 0; index <= value.length - size; index++) {
+    yield value.slice(index, index + size);
+  }
+}
+
+function slugifyPath(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9ก-๙_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 96) || 'note';
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+const STOP_WORDS = new Set([
+  'the',
+  'and',
+  'for',
+  'with',
+  'from',
+  'that',
+  'this',
+  'are',
+  'was',
+  'were',
+  'เป็น',
+  'และ',
+  'ของ',
+  'ใน',
+  'ที่',
+  'คือ',
+]);

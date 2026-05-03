@@ -48,6 +48,7 @@ import { PermissionService } from './permissions';
 import { DefaultPluginHookRegistry } from './plugin-hooks';
 import { WorkflowStore } from './workflows';
 import { WorkflowEngine } from './workflow/workflow-engine';
+import type { ObsidianDatabaseRecordSummary, ObsidianDatabaseService } from './obsidian-database';
 
 export class AIController {
   private readonly permissionService: PermissionService;
@@ -69,11 +70,12 @@ export class AIController {
     private readonly patchService?: PatchService,
     private readonly roleOrchestrator: RoleOrchestrationService = new RoleOrchestrationService(),
     private readonly settingsService?: LocalFirstSettingsService,
+    private readonly obsidianDb?: ObsidianDatabaseService,
   ) {
     this.agentLoader = new AgentLoader({ workspaceRoot: '' });
     this.workflowStore = new WorkflowStore({ workspaceRoot: '' });
-    this.workflowEngine = new WorkflowEngine();
-    this.traceService = new TraceService();
+    this.workflowEngine = new WorkflowEngine({ obsidianDb });
+    this.traceService = new TraceService({ obsidianDb });
     const permissions = this.settingsService?.getEffectiveSettings().policy?.permissions;
     this.permissionService = new PermissionService(permissions);
     this.compactionService = new CompactionService();
@@ -85,6 +87,16 @@ export class AIController {
    */
   registerPluginHook(hook: import('@ide/protocol').GatewayPluginHook): void {
     this.pluginRegistry.register(hook);
+  }
+
+  async hydrateObsidianDatabase(): Promise<void> {
+    await this.sessionStore.hydrateFromObsidian();
+    await this.traceService.hydrateFromObsidian();
+    await this.workflowEngine.hydrateFromObsidian();
+  }
+
+  async listObsidianDatabaseRecords(filter: { collection?: string; type?: string; status?: string } = {}): Promise<ObsidianDatabaseRecordSummary[]> {
+    return this.obsidianDb?.listRecords(filter) ?? [];
   }
 
   /**
@@ -102,6 +114,12 @@ export class AIController {
    */
   updateCompactionOptions(options: import('@ide/ai-core').CompactionOptions): void {
     this.compactionService.updateOptions(options);
+  }
+
+  refreshPermissionsFromSettings(): void {
+    this.permissionService.updatePermissions(
+      this.settingsService?.getEffectiveSettings().policy?.permissions ?? {},
+    );
   }
 
   async handleGenerate(request: AIRequest): Promise<AIResponse> {
@@ -1059,6 +1077,10 @@ export class AIController {
     return this.traceService;
   }
 
+  getPatchService(): PatchService | undefined {
+    return this.patchService;
+  }
+
   async getWorkspaceSummary(): Promise<string> {
     return this.workspace.getRepoSummary();
   }
@@ -1069,6 +1091,10 @@ export class AIController {
 
   searchObsidianMemory(query: string) {
     return this.workspace.searchObsidianNotes(query, 12);
+  }
+
+  retrieveObsidianRag(query: string, limit = 8) {
+    return this.workspace.retrieveObsidianRag(query, limit);
   }
 
   getObsidianMemoryStats(): ObsidianMemoryStats {

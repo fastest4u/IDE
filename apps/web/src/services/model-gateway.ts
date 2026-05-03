@@ -15,6 +15,8 @@ import type {
   ProviderId,
   ProviderRuntimeStatusResponse,
   ProviderTestConnectionResponse,
+  ToolApprovalRecord,
+  ToolApprovalStatus,
   WorkflowRunState,
   WorkflowVersion,
 } from '@ide/protocol';
@@ -125,10 +127,34 @@ export interface ObsidianNoteSummary {
   category: string;
 }
 
+export interface ObsidianRagResult {
+  chunk: {
+    id: string;
+    notePath: string;
+    title: string;
+    heading: string;
+    tags: string[];
+    content: string;
+    excerpt: string;
+    startLine: number;
+    endLine: number;
+    category: string;
+  };
+  score: number;
+  reasons: string[];
+  citation: {
+    path: string;
+    title: string;
+    heading: string;
+    lines: [number, number];
+  };
+}
+
 export interface ObsidianMemoryStatsResponse {
   obsidian: {
     ready: boolean;
     total: number;
+    chunks?: number;
     byCategory: Record<string, number>;
     tags: string[];
   };
@@ -324,6 +350,17 @@ export async function searchObsidianMemory(query: string): Promise<ObsidianNoteS
   return body.notes;
 }
 
+export async function retrieveObsidianRag(query: string, limit = 8): Promise<ObsidianRagResult[]> {
+  const response = await gatewayFetch('/memory/obsidian/rag', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query, limit }),
+  });
+  if (!response.ok) throw await readError(response, 'Retrieve Obsidian RAG');
+  const body = (await response.json()) as { results: ObsidianRagResult[] };
+  return body.results;
+}
+
 export async function runCollaboration(input: {
   goal: string;
   context: AIRequest['context'];
@@ -382,6 +419,10 @@ export interface WorkspacePickResponse {
 
 export interface ModelGatewayError extends Error {
   code?: string;
+}
+
+export interface ToolApprovalListResponse {
+  approvals: ToolApprovalRecord[];
 }
 
 async function readError(response: Response, action: string): Promise<Error> {
@@ -688,6 +729,42 @@ export async function rollbackPatch(patchId: string): Promise<PatchRecord> {
     headers: { 'content-type': 'application/json' },
   });
   return readPatchResponse(response, 'Rollback patch');
+}
+
+export async function listToolApprovals(status?: ToolApprovalStatus): Promise<ToolApprovalRecord[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  const response = await gatewayFetch(`/tool-approvals${query}`);
+  if (!response.ok) {
+    throw await readError(response, 'List tool approvals');
+  }
+  const body = (await response.json()) as ToolApprovalListResponse;
+  return body.approvals;
+}
+
+async function readToolApprovalResponse(response: Response, action: string): Promise<ToolApprovalRecord> {
+  if (!response.ok) {
+    throw await readError(response, action);
+  }
+  const body = (await response.json()) as { approval: ToolApprovalRecord };
+  return body.approval;
+}
+
+export async function approveToolApproval(approvalId: string, reason?: string): Promise<ToolApprovalRecord> {
+  const response = await gatewayFetch(`/tool-approvals/${encodeURIComponent(approvalId)}/approve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  return readToolApprovalResponse(response, 'Approve tool approval');
+}
+
+export async function rejectToolApproval(approvalId: string, reason?: string): Promise<ToolApprovalRecord> {
+  const response = await gatewayFetch(`/tool-approvals/${encodeURIComponent(approvalId)}/reject`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  return readToolApprovalResponse(response, 'Reject tool approval');
 }
 
 export async function getSettings(): Promise<IDESettings> {

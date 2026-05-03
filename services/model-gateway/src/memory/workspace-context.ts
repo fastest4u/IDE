@@ -6,6 +6,7 @@ import {
   InMemoryWorkspaceIndex,
   ObsidianKnowledgeBase,
   type ObsidianNote,
+  type ObsidianRAGResult,
   type FileKind,
 } from '@ide/workspace-core';
 
@@ -37,6 +38,7 @@ export interface WorkspaceWriteResult {
 export interface ObsidianMemoryStats {
   ready: boolean;
   total: number;
+  chunks?: number;
   byCategory: Record<string, number>;
   tags: string[];
 }
@@ -208,9 +210,14 @@ export class WorkspaceContextService {
     return this.obsidianKb.search({ query, limit });
   }
 
+  retrieveObsidianRag(query: string, limit = 8): ObsidianRAGResult[] {
+    if (!this.obsidianKb) return [];
+    return this.obsidianKb.retrieve({ query, limit });
+  }
+
   buildObsidianKnowledgeContext(query: string, maxNotes = 5): string {
     if (!this.obsidianKb) return '';
-    return this.obsidianKb.buildKnowledgeContext(query, maxNotes);
+    return this.obsidianKb.buildRagContext(query, maxNotes) || this.obsidianKb.buildKnowledgeContext(query, maxNotes);
   }
 
   getObsidianStats(): ObsidianMemoryStats {
@@ -232,7 +239,8 @@ export class WorkspaceContextService {
     }
 
     const created = new Date().toISOString();
-    const slug = slugify(`${created.slice(0, 10)}-${input.title}`);
+    const safeTitle = input.title.trim().replace(/[\r\n\0]/g, ' ').slice(0, 120) || 'Agent Session';
+    const slug = slugify(`${created.slice(0, 10)}-${safeTitle}`);
     const filePath = `docs/memory/agent-sessions/${slug}.md`;
     const tags = ['project/my-ide', 'ai/memory', 'agent/session', ...(input.tags ?? [])];
     const note = [
